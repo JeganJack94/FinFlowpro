@@ -3,22 +3,13 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const Navigation: React.FC = () => {
-  const { currentUser, signOut } = useAuth();
+  const { currentUser } = useAuth();
   const location = useLocation();
   
   // Only show navigation when user is authenticated and not on auth pages
   if (!currentUser || ['/', '/signin', '/signup'].includes(location.pathname)) {
     return null;
   }
-
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      // Navigate will happen automatically due to AuthRedirect
-    } catch (error) {
-      console.error("Failed to sign out", error);
-    }
-  };
 
   // Active state is handled directly in each Link component
 

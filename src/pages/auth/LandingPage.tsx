@@ -39,10 +39,10 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
         <section className="px-4 py-10">
           <div className="flex flex-col items-center text-center">
             <h1 className="text-3xl font-bold tracking-tight text-gray-900 mb-3">
-              Simplify Your Digital Experience
+              Take Control of Your Finances
             </h1>
             <p className="text-gray-600 mb-6 max-w-xs">
-              The all-in-one platform that helps you organize, collaborate, and achieve more in less time.
+              Track your income, expenses, investments, and goals all in one place with our intuitive personal finance app.
             </p>
             <button 
               onClick={() => navigateTo('signup')}
@@ -53,8 +53,8 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
             
             <div className="w-full max-w-xs h-64 rounded-xl overflow-hidden shadow-lg mb-6">
               <img 
-                src="https://readdy.ai/api/search-image?query=Modern%20app%20interface%20dashboard%20with%20purple%20accent%20colors%2C%20clean%20design%2C%20data%20visualization%2C%20productivity%20tools%2C%20organized%20layout%2C%20professional%20UI%2C%20high%20quality%20render%2C%20centered%20composition%2C%20soft%20lighting%2C%20digital%20workspace&width=375&height=256&seq=1&orientation=landscape" 
-                alt="App Interface Preview" 
+                src="https://media.istockphoto.com/id/2159021515/vector/vigilant-tracking-and-analysis-of-financial-plan-execution.jpg?s=612x612&w=0&k=20&c=TzC8ycCHz0pFO2VCvNBmfdH5U-kAbfAgP3AkyZMvwJs=" 
+                alt="FinFlow App Preview" 
                 className="w-full h-full object-cover object-top"
               />
             </div>
@@ -63,16 +63,16 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
 
         {/* Features Section */}
         <section className="px-4 py-8 bg-white">
-          <h2 className="text-2xl font-semibold text-center mb-8">Why Choose Us</h2>
+          <h2 className="text-2xl font-semibold text-center mb-8">Why Choose FinFlow</h2>
           <div className="grid grid-cols-1 gap-6">
             {/* Feature 1 */}
             <div className="flex flex-col items-center text-center p-4">
               <div className="w-16 h-16 mb-4 rounded-full bg-purple-100 flex items-center justify-center">
                 <i className="fas fa-bolt text-purple-700 text-xl"></i>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Lightning Fast</h3>
+              <h3 className="font-semibold text-lg mb-2">Easy Expense Tracking</h3>
               <p className="text-gray-600 text-sm">
-                Experience unparalleled speed with our optimized platform that loads in milliseconds.
+                Effortlessly log and categorize your expenses, income, investments and liabilities in seconds.
               </p>
             </div>
             
@@ -81,9 +81,9 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
               <div className="w-16 h-16 mb-4 rounded-full bg-purple-100 flex items-center justify-center">
                 <i className="fas fa-shield-alt text-purple-700 text-xl"></i>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Bank-Level Security</h3>
+              <h3 className="font-semibold text-lg mb-2">Financial Insights</h3>
               <p className="text-gray-600 text-sm">
-                Your data is protected with enterprise-grade encryption and advanced security protocols.
+                Visualize your spending patterns with powerful analytics and make smarter financial decisions.
               </p>
             </div>
             
@@ -92,9 +92,9 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
               <div className="w-16 h-16 mb-4 rounded-full bg-purple-100 flex items-center justify-center">
                 <i className="fas fa-sync text-purple-700 text-xl"></i>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Seamless Integration</h3>
+              <h3 className="font-semibold text-lg mb-2">Budget Management</h3>
               <p className="text-gray-600 text-sm">
-                Connect with your favorite tools and services for a unified workflow experience.
+                Set budget limits, track your progress, and receive alerts when you're close to exceeding them.
               </p>
             </div>
           </div>
@@ -112,11 +112,11 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
               </div>
               <div>
                 <h4 className="font-medium">James Davidson</h4>
-                <p className="text-sm text-gray-500">Marketing Director</p>
+                <p className="text-sm text-gray-500">Financial Advisor</p>
               </div>
             </div>
             <p className="text-gray-600 text-sm italic">
-              "This app has transformed how our team collaborates. We've seen a 40% increase in productivity since implementing it."
+              "FinFlow has transformed how I manage my personal finances. The budget tracking and spending insights are incredibly useful for financial planning."
             </p>
             <div className="mt-3 flex">
               <i className="fas fa-star text-yellow-400"></i>
@@ -135,11 +135,11 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
               </div>
               <div>
                 <h4 className="font-medium">Sarah Reynolds</h4>
-                <p className="text-sm text-gray-500">Freelance Designer</p>
+                <p className="text-sm text-gray-500">Small Business Owner</p>
               </div>
             </div>
             <p className="text-gray-600 text-sm italic">
-              "The intuitive interface and powerful features have made managing my client projects so much easier. Highly recommended!"
+              "The intuitive interface and financial goal tracking have made managing my business and personal expenses so much simpler. I can finally save for my dreams!"
             </p>
             <div className="mt-3 flex">
               <i className="fas fa-star text-yellow-400"></i>
@@ -153,11 +153,11 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
 
         {/* Trust Indicators */}
         <section className="px-4 py-8 bg-white">
-          <p className="text-center text-sm text-gray-500 mb-6">Trusted by companies worldwide</p>
+          <p className="text-center text-sm text-gray-500 mb-6">Trusted by financial experts</p>
           <div className="flex justify-around items-center">
-            <div className="text-gray-400 font-semibold">ACME Inc.</div>
-            <div className="text-gray-400 font-semibold">GlobalTech</div>
-            <div className="text-gray-400 font-semibold">FutureX</div>
+            <div className="text-gray-400 font-semibold">MoneyWise</div>
+            <div className="text-gray-400 font-semibold">FinTrack</div>
+            <div className="text-gray-400 font-semibold">WealthPro</div>
           </div>
         </section>
       </main>
@@ -165,7 +165,7 @@ const LandingPage: React.FC<NavigationProps> = ({ navigateTo }) => {
       {/* Footer */}
       <footer className="bg-gray-100 py-6 px-4 mt-auto">
         <div className="text-center text-sm text-gray-500">
-          <p>© 2025 WinTech. All rights reserved.</p>
+          <p>© 2025 FinFlow. All rights reserved.</p>
           <div className="flex justify-center space-x-4 mt-3">
             <a href="#" className="hover:text-purple-700 transition cursor-pointer">Terms</a>
             <a href="#" className="hover:text-purple-700 transition cursor-pointer">Privacy</a>

@@ -3,9 +3,36 @@ import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, where, orderBy, deleteDoc } from 'firebase/firestore';
+import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, where, orderBy, deleteDoc, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import PWAPrompt from '../components/PWAPrompt';
+
+// Helper function to format date and time
+const formatDateTime = (dateTimeString: string): string => {
+  if (!dateTimeString) return '';
+  
+  try {
+    const date = new Date(dateTimeString);
+    if (isNaN(date.getTime())) return dateTimeString;
+    
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const year = date.getFullYear();
+    const month = months[date.getMonth()];
+    const day = date.getDate();
+    
+    let hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    
+    hours = hours % 12;
+    hours = hours ? hours : 12; // Convert 0 to 12
+    
+    return `${year}-${month}-${day} ${hours}:${minutes} ${ampm}`;
+  } catch (error) {
+    console.error('Error formatting date:', error);
+    return dateTimeString;
+  }
+};
 
 const Home: React.FC = () => {
   const { 
@@ -21,7 +48,10 @@ const Home: React.FC = () => {
   const [transactionType, setTransactionType] = useState<'expense' | 'income' | 'investment' | 'liability'>('expense');
   const [amount, setAmount] = useState<string>('');
   const [category, setCategory] = useState<string>('');
-  const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState<string>(() => {
+    const now = new Date();
+    return `${now.toISOString().split('T')[0]}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  });
   const [note, setNote] = useState<string>('');
   
   // Budget limit modal states
@@ -101,8 +131,7 @@ const Home: React.FC = () => {
       transactionsRef,
       orderBy('timestamp', 'desc')
     );
-    
-    const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
+     const unsubscribe = onSnapshot(transactionsQuery, async (snapshot) => {
       const transactions: Transaction[] = snapshot.docs.map(doc => {
         const data = doc.data();
         return {
@@ -156,59 +185,78 @@ const Home: React.FC = () => {
 
       // Update budget limits with actual spending
       if (budgetLimits.length > 0) {
-        const updatedLimits = budgetLimits.map(limit => {
+        const updatedLimits = await Promise.all(budgetLimits.map(async (limit) => {
           const spent = expensesByCategory[limit.category] || 0;
-          const percentSpent = (spent / limit.limit) * 100;
           
           // Check if notifications are enabled in user preferences
           const notificationsEnabled = localStorage.getItem('notifications') === 'true';
           
-          // Check if we need to create a notification (only if notifications are enabled)
-          if (notificationsEnabled && percentSpent >= limit.notificationThreshold && !limit.notificationSent) {
-            // Check if we already have a notification for this budget limit from today
-            const today = new Date().toDateString();
-            const existingNotification = notifications.find(notif => 
-              notif.category === limit.category && 
-              notif.type === 'budget-alert' &&
-              new Date(notif.timestamp?.toDate?.() || notif.timestamp).toDateString() === today
-            );
-
-            // Count today's notifications to enforce daily limit
-            const todaysNotifications = notifications.filter(notif => 
-              new Date(notif.timestamp?.toDate?.() || notif.timestamp).toDateString() === today
-            );
-            const dailyNotificationCount = todaysNotifications.length;
-            const MAX_DAILY_NOTIFICATIONS = 10;
-
-            if (!existingNotification && dailyNotificationCount < MAX_DAILY_NOTIFICATIONS) {
-              // Create a notification for exceeded threshold
-              const newNotification = {
-                id: `${limit.id}-${Date.now()}`,
-                title: 'Budget Alert',
-                message: `You've used ${percentSpent.toFixed(0)}% of your ${limit.category} budget`,
-                category: limit.category,
-                type: 'budget-alert',
-                timestamp: serverTimestamp(),
-                read: false,
-                createdAt: new Date().toISOString()
-              };
-              
-              // Add notification to Firestore
-              if (currentUser) {
-                addDoc(collection(db, 'users', currentUser.uid, 'notifications'), newNotification)
-                  .catch(error => console.error('Error adding notification:', error));
-              }
-              
-              // Update local notifications array
-              setNotifications(prev => [newNotification, ...prev]);
-            }
+          // Only proceed if notifications are enabled
+          if (notificationsEnabled) {
+            // Calculate percentage spent
+            const percentSpentValue = (spent / limit.limit) * 100;
             
-            // Mark this notification as sent
-            return { ...limit, spent, notificationSent: true };
+            // Current date as YYYY-MM-DD format for tracking daily notifications
+            const today = new Date().toISOString().split('T')[0];
+            
+            // Check if we should send a notification:
+            // 1. Must be over threshold
+            // 2. Either no last notification date or it wasn't today
+            if (percentSpentValue >= limit.notificationThreshold && 
+                (!limit.lastNotificationDate || limit.lastNotificationDate !== today)) {
+              
+              // Check if we already have a notification for this budget limit from today
+              const existingTodayNotification = notifications.find(notif => 
+                notif.category === limit.category && 
+                notif.type === 'budget-alert' &&
+                notif.createdDate === today && 
+                !notif.read // only count unread notifications
+              );
+              
+              // Only send notification if one doesn't already exist for today
+              if (!existingTodayNotification && currentUser) {
+                console.log(`Creating notification for ${limit.category} budget (${percentSpentValue.toFixed(0)}%)`);
+                
+                try {
+                  // Create a notification for exceeded threshold
+                  const newNotification = {
+                    title: 'Budget Alert',
+                    message: `You've used ${percentSpentValue.toFixed(0)}% of your ${limit.category} budget`,
+                    category: limit.category,
+                    type: 'budget-alert',
+                    timestamp: serverTimestamp(),
+                    read: false,
+                    createdDate: today
+                  };
+                
+                  // Add notification to Firestore
+                  const notificationDocRef = await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), newNotification);
+                  console.log(`Added notification with ID: ${notificationDocRef.id}`);
+                  
+                  // Update the budget limit in Firestore to track when we sent the notification
+                  const budgetRef = doc(db, 'users', currentUser.uid, 'budgetLimits', limit.id);
+                  await updateDoc(budgetRef, { 
+                    lastNotificationDate: today
+                  });
+                  console.log(`Updated budget limit with lastNotificationDate: ${today}`);
+                  
+                  // Return updated limit object
+                  return { 
+                    ...limit, 
+                    spent, 
+                    lastNotificationDate: today
+                  };
+                } catch (error) {
+                  console.error('Error in notification/budget update process:', error);
+                  return { ...limit, spent };
+                }
+              }
+            }
           }
           
+          // If no notification needed to be sent
           return { ...limit, spent };
-        });
+        }));
         
         setBudgetLimits(updatedLimits);
       }
@@ -474,7 +522,7 @@ const Home: React.FC = () => {
                     </div>
                     <div>
                       <div className="font-medium text-gray-800 dark:text-white">{transaction.category}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">{transaction.date}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{formatDateTime(transaction.date)}</div>
                     </div>
                   </div>
                   <div className="flex items-center">
@@ -660,15 +708,29 @@ const Home: React.FC = () => {
                 </div>
               </div>
               
-              {/* Date input */}
+              {/* Date and Time input */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
-                <input
-                  type="date"
-                  className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                />
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date & Time</label>
+                <div className="flex gap-2">
+                  <input
+                    type="date"
+                    className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                    value={date.split('T')[0]}
+                    onChange={(e) => {
+                      const currentTime = date.split('T')[1] || '00:00';
+                      setDate(`${e.target.value}T${currentTime}`);
+                    }}
+                  />
+                  <input
+                    type="time"
+                    className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                    value={date.split('T')[1] || '00:00'}
+                    onChange={(e) => {
+                      const currentDate = date.split('T')[0];
+                      setDate(`${currentDate}T${e.target.value}`);
+                    }}
+                  />
+                </div>
               </div>
               
               {/* Note input */}
@@ -806,7 +868,7 @@ const Home: React.FC = () => {
     }
     
     try {
-      // Create transaction object
+      // Create transaction object with date and time
       const transaction = {
         type: transactionType,
         amount: parseFloat(amount),
@@ -824,7 +886,8 @@ const Home: React.FC = () => {
         // Reset form and close modal
         setAmount('');
         setCategory('');
-        setDate(new Date().toISOString().split('T')[0]);
+        const now = new Date();
+        setDate(`${now.toISOString().split('T')[0]}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
         setNote('');
         setShowAddModal(false);
       }
@@ -849,14 +912,15 @@ const Home: React.FC = () => {
         return;
       }
       
-      // Create budget limit object
+      // Create budget limit object with lastNotificationDate
       const budgetLimit = {
         category: limitCategory,
         limit: limitValue,
         spent: 0,
         notificationThreshold,
         userId: currentUser?.uid,
-        timestamp: serverTimestamp()
+        timestamp: serverTimestamp(),
+        lastNotificationDate: null // Track for daily notification control
       };
       
       // Add to Firestore
@@ -872,7 +936,7 @@ const Home: React.FC = () => {
     } catch (error) {
       console.error('Error adding budget limit:', error);
     }
-  } 
-} 
+  }
+}
 
 export default Home;

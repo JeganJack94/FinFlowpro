@@ -35,8 +35,7 @@ const Goals: React.FC = () => {
 
     setIsLoading(true);
     const goalsQuery = query(
-      collection(db, 'goals'),
-      where('userId', '==', currentUser.uid),
+      collection(db, `users/${currentUser.uid}/goals`),
       orderBy('createdAt', 'desc')
     );
 
@@ -72,7 +71,8 @@ const Goals: React.FC = () => {
   const handleDeleteGoal = async (goalId: string) => {
     if (window.confirm('Are you sure you want to delete this goal?')) {
       try {
-        await deleteDoc(doc(db, 'goals', goalId));
+        if (!currentUser) return;
+        await deleteDoc(doc(db, `users/${currentUser.uid}/goals`, goalId));
         // onSnapshot will handle updating the UI
       } catch (error) {
         console.error("Error deleting goal:", error);

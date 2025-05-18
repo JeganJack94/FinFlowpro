@@ -1,22 +1,18 @@
-import React, { useEffect, useState, lazy, Suspense } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import SignUp from "./pages/auth/SignUpPage";
+import SignIn from "./pages/auth/SignInPage";
+import LandingPage from "./pages/auth/LandingPage";
+import Home from "./pages/Home";
+import Analytics from "./pages/Analytics";
+import Goals from "./pages/Goals";
+import Profile from "./pages/Profile";
+import Notifications from "./pages/Notifications";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { FinanceProvider } from "./contexts/FinanceContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navigation from "./components/Navigation";
 import './styles/App.css'; // Import your global CSS file
-import performanceMonitor from './utils/performanceMonitor';
-
-// Lazy load all page components for code splitting
-const SignUp = lazy(() => import("./pages/auth/SignUpPage"));
-const SignIn = lazy(() => import("./pages/auth/SignInPage"));
-const LandingPage = lazy(() => import("./pages/auth/LandingPage"));
-const Home = lazy(() => import("./pages/Home"));
-const Analytics = lazy(() => import("./pages/Analytics"));
-const Goals = lazy(() => import("./pages/Goals"));
-const Profile = lazy(() => import("./pages/Profile"));
-const Notifications = lazy(() => import("./pages/Notifications"));
-const FinanceTracker = lazy(() => import("./pages/Finance-Tracker-Dashboard-Optimized"));
 
 // Initialize dark mode from localStorage or system preference on page load
 function initializeDarkMode() {
@@ -46,13 +42,6 @@ function AuthRedirect() {
   return null;
 }
 
-// Loading spinner component for route transitions
-const RouteLoadingSpinner = () => (
-  <div className="flex justify-center items-center h-screen w-full">
-    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div>
-  </div>
-);
-
 function AppRoutes() {
   const navigate = useNavigate();
   const navigateTo = (page: 'landing' | 'signin' | 'signup') => {
@@ -61,61 +50,45 @@ function AppRoutes() {
     if (page === 'signup') navigate('/signup');
   };
   
-  // Add performance measurement for route changes
-  const location = useLocation();
-  useEffect(() => {
-    // Create performance markers for navigation
-    performance.mark(`route-change-to-${location.pathname}`);
-  }, [location]);
-  
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200">
       <AuthRedirect />
-      <Suspense fallback={<RouteLoadingSpinner />}>
-        <Routes>
-          {/* Public routes */}
-          <Route path="/" element={<LandingPage navigateTo={navigateTo} />} />
-          <Route path="/signup" element={<SignUp navigateTo={navigateTo} />} />
-          <Route path="/signin" element={<SignIn navigateTo={navigateTo} />} />
-          
-          {/* Protected routes */}
-          <Route path="/home" element={
-            <ProtectedRoute>
-              <Home />
-            </ProtectedRoute>
-          } />
-          <Route path="/analytics" element={
-            <ProtectedRoute>
-              <Analytics />
-            </ProtectedRoute>
-          } />
-          <Route path="/goals" element={
-            <ProtectedRoute>
-              <Goals />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile" element={
-            <ProtectedRoute>
-              <Profile />
-            </ProtectedRoute>
-          } />
-          <Route path="/notifications" element={
-            <ProtectedRoute>
-              <Notifications />
-            </ProtectedRoute>
-          } />
-          
-          {/* Add optimized finance tracker dashboard */}
-          <Route path="/finance-tracker" element={
-            <ProtectedRoute>
-              <FinanceTracker />
-            </ProtectedRoute>
-          } />
-          
-          {/* Fallback route */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
+      <Routes>
+        {/* Public routes */}
+        <Route path="/" element={<LandingPage navigateTo={navigateTo} />} />
+        <Route path="/signup" element={<SignUp navigateTo={navigateTo} />} />
+        <Route path="/signin" element={<SignIn navigateTo={navigateTo} />} />
+        
+        {/* Protected routes */}
+        <Route path="/home" element={
+          <ProtectedRoute>
+            <Home />
+          </ProtectedRoute>
+        } />
+        <Route path="/analytics" element={
+          <ProtectedRoute>
+            <Analytics />
+          </ProtectedRoute>
+        } />
+        <Route path="/goals" element={
+          <ProtectedRoute>
+            <Goals />
+          </ProtectedRoute>
+        } />
+        <Route path="/profile" element={
+          <ProtectedRoute>
+            <Profile />
+          </ProtectedRoute>
+        } />
+        <Route path="/notifications" element={
+          <ProtectedRoute>
+            <Notifications />
+          </ProtectedRoute>
+        } />
+        
+        {/* Fallback route */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </div>
   );
 }

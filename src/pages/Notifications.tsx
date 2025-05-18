@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
+import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, writeBatch, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 const Notifications: React.FC = () => {
@@ -53,13 +53,24 @@ const Notifications: React.FC = () => {
     if (!currentUser || notification.read) return;
     
     try {
-      // Update notification in Firestore
-      await deleteDoc(doc(db, 'users', currentUser.uid, 'notifications', notification.id));
-      await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), {
-        ...notification,
-        read: true,
-        timestamp: serverTimestamp()
-      });
+      // Check if the notification still exists before updating
+      const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', notification.id);
+      
+      // First get the document to check if it exists
+      const docSnap = await getDoc(notificationRef);
+      
+      if (docSnap.exists()) {
+        // Document exists, safe to update
+        await updateDoc(notificationRef, {
+          read: true,
+          // Don't update timestamp as we want to preserve the original order
+        });
+        console.log('Marked notification as read:', notification.id);
+      } else {
+        console.log('Notification no longer exists:', notification.id);
+        // Refresh notifications list to remove the deleted notification
+        // The onSnapshot listener will automatically update the list
+      }
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
@@ -73,14 +84,33 @@ const Notifications: React.FC = () => {
     if (unreadNotifications.length === 0) return;
     
     try {
+      // First, check which notifications still exist
+      const validNotifications = [];
+      
       for (const notif of unreadNotifications) {
-        await deleteDoc(doc(db, 'users', currentUser.uid, 'notifications', notif.id));
-        await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), {
-          ...notif,
-          read: true,
-          timestamp: serverTimestamp()
-        });
+        const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', notif.id);
+        const docSnap = await getDoc(notificationRef);
+        
+        if (docSnap.exists()) {
+          validNotifications.push(notif);
+        }
       }
+      
+      if (validNotifications.length === 0) {
+        console.log('No valid notifications to mark as read');
+        return;
+      }
+      
+      // Use a batch for better performance
+      const batch = writeBatch(db);
+      
+      validNotifications.forEach(notif => {
+        const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', notif.id);
+        batch.update(notificationRef, { read: true });
+      });
+      
+      await batch.commit();
+      console.log(`Marked ${validNotifications.length} notifications as read`);
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
     }
@@ -93,35 +123,56 @@ const Notifications: React.FC = () => {
     try {
       // Show confirmation before deleting
       if (window.confirm('Are you sure you want to delete all notifications? This action cannot be undone.')) {
-        // Log for debugging
+        setLoading(true); // Show loading state
         console.log('Clearing notifications:', notifications.length);
+        
+        // Get all valid notification IDs first to avoid errors with non-existent documents
+        const validNotificationIds = [];
+        
+        // Check each notification to make sure it exists before trying to delete it
+        for (const notification of notifications) {
+          const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', notification.id);
+          const docSnap = await getDoc(notificationRef);
+          if (docSnap.exists()) {
+            validNotificationIds.push(notification.id);
+          }
+        }
+        
+        if (validNotificationIds.length === 0) {
+          console.log('No valid notifications to delete');
+          setLoading(false);
+          return;
+        }
+        
+        console.log(`Found ${validNotificationIds.length} valid notifications to delete`);
         
         // For better performance with large numbers of items, process in chunks
         const BATCH_SIZE = 300; // Firestore has a limit of 500 operations per batch
         
         // Process notifications in chunks to stay within Firestore limits
-        for (let i = 0; i < notifications.length; i += BATCH_SIZE) {
+        for (let i = 0; i < validNotificationIds.length; i += BATCH_SIZE) {
           const batch = writeBatch(db);
-          const chunk = notifications.slice(i, i + BATCH_SIZE);
+          const chunkIds = validNotificationIds.slice(i, i + BATCH_SIZE);
           
           // Add deletions to batch
-          chunk.forEach(notification => {
-            const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', notification.id);
+          chunkIds.forEach(id => {
+            const notificationRef = doc(db, 'users', currentUser.uid, 'notifications', id);
             batch.delete(notificationRef);
-            console.log('Deleting notification:', notification.id);
           });
           
           // Execute this batch
           await batch.commit();
-          console.log(`Committed batch ${i/BATCH_SIZE + 1}, deleted ${chunk.length} notifications`);
+          console.log(`Committed batch ${Math.floor(i/BATCH_SIZE) + 1}, deleted ${chunkIds.length} notifications`);
         }
         
-        // Manually update local state after all batches complete
-        setNotifications([]);
+        // Set loading to false once all deletes are complete
+        setLoading(false);
+        // Don't need to manually update state as onSnapshot will handle it
         console.log('Notifications cleared successfully');
       }
     } catch (error) {
       console.error('Error clearing notifications:', error);
+      setLoading(false);
       // Display error to user
       alert('There was an error clearing notifications. Please try again.');
     }

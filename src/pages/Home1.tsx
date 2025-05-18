@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, where, orderBy, deleteDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import PWAPrompt from '../components/PWAPrompt';
 
 const Home: React.FC = () => {
   const { 
@@ -12,6 +14,7 @@ const Home: React.FC = () => {
   } = useFinance();
   
   const { currentUser } = useAuth();
+  const navigate = useNavigate();
   
   // Transaction modal states
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
@@ -32,7 +35,6 @@ const Home: React.FC = () => {
   
   // Notifications state
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [showNotifications, setShowNotifications] = useState<boolean>(false);
   
   // Category options for each transaction type
   const categoryOptions = {
@@ -158,8 +160,11 @@ const Home: React.FC = () => {
           const spent = expensesByCategory[limit.category] || 0;
           const percentSpent = (spent / limit.limit) * 100;
           
-          // Check if we need to create a notification
-          if (percentSpent >= limit.notificationThreshold && !limit.notificationSent) {
+          // Check if notifications are enabled in user preferences
+          const notificationsEnabled = localStorage.getItem('notifications') === 'true';
+          
+          // Check if we need to create a notification (only if notifications are enabled)
+          if (notificationsEnabled && percentSpent >= limit.notificationThreshold && !limit.notificationSent) {
             // Check if we already have a notification for this budget limit from today
             const today = new Date().toDateString();
             const existingNotification = notifications.find(notif => 
@@ -168,7 +173,14 @@ const Home: React.FC = () => {
               new Date(notif.timestamp?.toDate?.() || notif.timestamp).toDateString() === today
             );
 
-            if (!existingNotification) {
+            // Count today's notifications to enforce daily limit
+            const todaysNotifications = notifications.filter(notif => 
+              new Date(notif.timestamp?.toDate?.() || notif.timestamp).toDateString() === today
+            );
+            const dailyNotificationCount = todaysNotifications.length;
+            const MAX_DAILY_NOTIFICATIONS = 10;
+
+            if (!existingNotification && dailyNotificationCount < MAX_DAILY_NOTIFICATIONS) {
               // Create a notification for exceeded threshold
               const newNotification = {
                 id: `${limit.id}-${Date.now()}`,
@@ -177,7 +189,8 @@ const Home: React.FC = () => {
                 category: limit.category,
                 type: 'budget-alert',
                 timestamp: serverTimestamp(),
-                read: false
+                read: false,
+                createdAt: new Date().toISOString()
               };
               
               // Add notification to Firestore
@@ -202,7 +215,7 @@ const Home: React.FC = () => {
     });
     
     return () => unsubscribe();
-  }, [currentUser, budgetLimits]);
+  }, [currentUser, budgetLimits, notifications]);
 
   // Fetch budget limits from Firestore
   useEffect(() => {
@@ -216,11 +229,17 @@ const Home: React.FC = () => {
     );
     
     const unsubscribe = onSnapshot(budgetLimitsQuery, (snapshot) => {
-      const limits = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        notificationSent: false // Reset notification status on initial load
-      }));
+      const limits = snapshot.docs.map(doc => {
+        const data = doc.data();
+        // Only reset notification status if notifications are enabled
+        const notificationsEnabled = localStorage.getItem('notifications') === 'true';
+        return {
+          id: doc.id,
+          ...data,
+          // If notifications are disabled, keep the sent status to prevent new notifications
+          notificationSent: notificationsEnabled ? (data.notificationSent || false) : true
+        };
+      });
       
       setBudgetLimits(limits);
     });
@@ -291,6 +310,9 @@ const Home: React.FC = () => {
       onTouchEnd={handleTouchEnd}
     >
       
+      {/* PWA Install Prompt */}
+      <PWAPrompt className="mx-4 mt-2" />
+      
       <div className="flex flex-col gap-4">
         <motion.div 
           className="relative overflow-hidden bg-gradient-to-br from-purple-100 to-white dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-lg p-5 mb-2"
@@ -315,107 +337,12 @@ const Home: React.FC = () => {
                 >
                   <motion.i 
                     className="fa-solid fa-bell text-gray-600 dark:text-gray-400 text-lg cursor-pointer"
-                    onClick={() => setShowNotifications(!showNotifications)}
+                    onClick={() => navigate('/notifications')}
                   ></motion.i>
                   {notifications.filter(n => !n.read).length > 0 && (
                     <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
                       {notifications.filter(n => !n.read).length}
                     </span>
-                  )}
-                  
-                  {/* Notifications dropdown */}
-                  {showNotifications && (
-                    <motion.div 
-                      className="absolute top-8 right-0 w-80 md:w-96 bg-white dark:bg-gray-800 rounded-lg shadow-xl z-50 overflow-hidden"
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                        <h3 className="font-medium text-lg text-gray-800 dark:text-white">Notifications</h3>
-                        <button 
-                          className="text-sm text-purple-500 hover:text-purple-700 transition-colors"
-                          onClick={async () => {
-                            if (currentUser) {
-                              // Mark all notifications as read
-                              for (const notif of notifications) {
-                                if (!notif.read) {
-                                  try {
-                                    // Update notification in Firestore
-                                    await deleteDoc(doc(db, 'users', currentUser.uid, 'notifications', notif.id));
-                                    await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), {
-                                      ...notif,
-                                      read: true,
-                                      timestamp: serverTimestamp()
-                                    });
-                                  } catch (error) {
-                                    console.error('Error marking notification as read:', error);
-                                  }
-                                }
-                              }
-                            }
-                          }}
-                        >
-                          Mark all as read
-                        </button>
-                      </div>
-                      <div className="max-h-120 overflow-y-auto">
-                        {notifications.length === 0 ? (
-                          <div className="p-8 text-center text-gray-500 dark:text-gray-400 flex flex-col items-center">
-                            <i className="fa-solid fa-bell-slash text-3xl mb-3"></i>
-                            <p className="text-sm font-medium">No notifications</p>
-                            <p className="text-xs mt-1">You're all caught up!</p>
-                          </div>
-                        ) : (
-                          notifications.map(notification => (
-                            <div 
-                              key={notification.id} 
-                              className={`p-4 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${!notification.read ? 'bg-purple-50 dark:bg-purple-900/20' : ''}`}
-                              onClick={async () => {
-                                if (currentUser && !notification.read) {
-                                  try {
-                                    // Mark as read in Firestore
-                                    await deleteDoc(doc(db, 'users', currentUser.uid, 'notifications', notification.id));
-                                    await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), {
-                                      ...notification,
-                                      read: true,
-                                      timestamp: serverTimestamp()
-                                    });
-                                  } catch (error) {
-                                    console.error('Error marking notification as read:', error);
-                                  }
-                                }
-                              }}
-                            >
-                              <div className="flex items-start">
-                                <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900 flex items-center justify-center mr-3 flex-shrink-0">
-                                  <i className="fa-solid fa-chart-pie text-purple-500"></i>
-                                </div>
-                                <div>
-                                  <div className="font-medium text-sm text-gray-800 dark:text-white">{notification.title}</div>
-                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{notification.message}</p>
-                                  <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                                    {typeof notification.timestamp === 'object' && notification.timestamp?.toDate 
-                                      ? notification.timestamp.toDate().toLocaleString() 
-                                      : new Date().toLocaleString()}
-                                  </div>
-                                </div>
-                                {!notification.read && (
-                                  <div className="ml-auto pl-2 flex items-center">
-                                    <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                                  </div>
-                                )}
-                              </div>
-                              {!notification.read && (
-                                <div className="mt-2 text-right">
-                                  <span className="text-xs text-purple-500">Tap to mark as read</span>
-                                </div>
-                              )}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </motion.div>
                   )}
                 </motion.div>
               </div>

@@ -84,7 +84,7 @@ const GoalModal: React.FC<GoalModalProps> = ({ showModal, onClose, onSave, initi
       };
 
       if (currentUser) {
-        const docRef = await addDoc(collection(db, 'goals'), newGoal);
+        const docRef = await addDoc(collection(db, `users/${currentUser.uid}/goals`), newGoal);
         onSave({
           ...newGoal,
           id: docRef.id
