@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFinance } from '../contexts/FinanceContext';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, where, onSnapshot, deleteDoc, doc, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, deleteDoc, doc, orderBy } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import GoalModal from '../components/GoalModal';
 
@@ -62,7 +62,7 @@ const Goals: React.FC = () => {
     setShowGoalModal(true);
   }, []);
 
-  const handleSaveGoal = (goal: Goal) => {
+  const handleSaveGoal = (_goal: Goal) => {
     // The goal is already saved to Firestore in the modal component
     // onSnapshot will handle updating the UI
     setSelectedGoalCategory(null);

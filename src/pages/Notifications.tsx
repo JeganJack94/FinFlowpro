@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, writeBatch, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, collection, query, orderBy, writeBatch, updateDoc, getDoc, onSnapshot, QuerySnapshot, QueryDocumentSnapshot } from 'firebase/firestore';
+import type { DocumentData } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 const Notifications: React.FC = () => {
@@ -31,8 +32,8 @@ const Notifications: React.FC = () => {
       orderBy('timestamp', 'desc')
     );
     
-    const unsubscribe = onSnapshot(notificationsQuery, (snapshot) => {
-      const userNotifications = snapshot.docs.map(doc => ({
+    const unsubscribe = onSnapshot(notificationsQuery, (snapshot: QuerySnapshot<DocumentData>) => {
+      const userNotifications = snapshot.docs.map((doc: QueryDocumentSnapshot<DocumentData>) => ({
         id: doc.id,
         ...doc.data()
       }));

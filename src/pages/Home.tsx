@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, where, orderBy, deleteDoc, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
+import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import PWAPrompt from '../components/PWAPrompt';
 
