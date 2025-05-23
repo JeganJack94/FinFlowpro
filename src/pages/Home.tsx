@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
 import { motion } from 'framer-motion';
@@ -31,6 +31,133 @@ const formatDateTime = (dateTimeString: string): string => {
     return dateTimeString;
   }
 };
+
+// Memoized transaction component to prevent unnecessary re-renders
+const TransactionItem = React.memo(({
+  transaction,
+  formatCurrency,
+  getCategoryIcon,
+  onDelete,
+}: {
+  transaction: {
+    id: string;
+    type: string;
+    amount: number;
+    category: string;
+    date: string;
+  };
+  formatCurrency: (amount: number) => string;
+  getCategoryIcon: (category: string, type: string) => string;
+  onDelete?: (id: string) => Promise<void>;
+}) => {
+  return (
+    <div className="group bg-white dark:bg-gray-800 rounded-lg shadow-sm p-3 flex items-center justify-between transform transition-all duration-300 hover:scale-[1.02] hover:shadow-md">
+      <div className="flex items-center">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
+          transaction.type === 'income' ? 'bg-purple-100 dark:bg-purple-900' :
+          transaction.type === 'expense' ? 'bg-red-100 dark:bg-red-900' :
+          transaction.type === 'investment' ? 'bg-blue-100 dark:bg-blue-900' :
+          'bg-yellow-100 dark:bg-yellow-900'
+        }`}>
+          <i className={`${getCategoryIcon(transaction.category, transaction.type)} ${
+            transaction.type === 'income' ? 'text-purple-500' :
+            transaction.type === 'expense' ? 'text-red-500' :
+            transaction.type === 'investment' ? 'text-blue-500' :
+            'text-yellow-500'
+          }`}></i>
+        </div>
+        <div>
+          <div className="font-medium text-gray-800 dark:text-white">{transaction.category}</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400">{formatDateTime(transaction.date)}</div>
+        </div>
+      </div>
+      <div className="flex items-center">
+        <div className={`font-semibold mr-3 ${
+          transaction.type === 'income' ? 'text-purple-500' :
+          transaction.type === 'expense' ? 'text-red-500' :
+          transaction.type === 'investment' ? 'text-blue-500' :
+          'text-yellow-500'
+        }`}>
+          {transaction.type === 'income' || transaction.type === 'investment' ? '+' : '-'}{formatCurrency(transaction.amount)}
+        </div>
+        {onDelete && (
+          <button
+            className="focus:outline-none p-0 bg-transparent shadow-none border-none"
+            tabIndex={0}
+            aria-label="Delete transaction"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(transaction.id);
+            }}
+          >
+            <i className="fa-solid fa-trash-alt text-lg text-red-400 hover:text-red-500 focus:text-red-600 transition-colors duration-200"></i>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+});
+
+// BudgetLimit type definition
+type BudgetLimit = {
+  id: string;
+  category: string;
+  limit: number;
+  spent: number;
+  notificationThreshold: number;
+  userId?: string;
+  timestamp?: Timestamp | null;
+  lastNotificationDate?: string | null;
+  notificationSent?: boolean;
+};
+
+// Memoized budget limit component
+const BudgetLimitItem = React.memo(({ 
+  budget, 
+  index, 
+  formatCurrency, 
+  onDelete 
+}: { 
+  budget: BudgetLimit, 
+  index: number, 
+  formatCurrency: (amount: number) => string,
+  onDelete: (id: string) => Promise<void>
+}) => {
+  return (
+    <motion.div 
+      key={index} 
+      className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 * index, duration: 0.3 }}
+      whileHover={{ scale: 1.02, boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.1)" }}
+    >
+      <div className="flex justify-between mb-1">
+        <span className="font-medium text-gray-800 dark:text-white">{budget.category}</span>
+        <div className="flex items-center">
+          <span className="text-gray-600 dark:text-gray-300 mr-2">
+            {formatCurrency(budget.spent)} / {formatCurrency(budget.limit)}
+          </span>
+          <button 
+            className="focus:outline-none p-0 bg-transparent shadow-none border-none"
+            onClick={() => onDelete(budget.id)}
+          >
+            <i className="fa-solid fa-trash-alt text-sm text-red-500 dark:text-red-400 hover:text-red-600 focus:text-red-600 transition-colors duration-200"></i>
+          </button>
+        </div>
+      </div>
+      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mb-1">
+        <div 
+          className={`h-2.5 rounded-full ${
+            (budget.spent / budget.limit) > 0.9 ? 'bg-red-500' :
+            (budget.spent / budget.limit) > 0.7 ? 'bg-purple-500' : 'bg-purple-500'
+          }`} 
+          style={{ width: `${Math.min((budget.spent / budget.limit) * 100, 100)}%` }}
+        ></div>
+      </div>
+    </motion.div>
+  );
+});
 
 const Home: React.FC = () => {
   const { 
@@ -68,43 +195,43 @@ const Home: React.FC = () => {
   // All transactions modal state
   const [showAllTransactionsModal, setShowAllTransactionsModal] = useState(false);
   
-  // Category options for each transaction type
-  const categoryOptions = {
+  // Category options for each transaction type - memoized to prevent re-creation on each render
+  const categoryOptions = useMemo(() => ({
     income: [
-      { id: 'salary', name: 'Salary', icon: 'fa-money-bill-wave' },
-      { id: 'freelance', name: 'Freelance', icon: 'fa-laptop-code' },
-      { id: 'investment', name: 'Investment', icon: 'fa-chart-line' },
-      { id: 'business', name: 'Business', icon: 'fa-briefcase' }
+      { id: 'salary', name: 'Salary', icon: 'fa-solid fa-money-bill-wave' },
+      { id: 'freelance', name: 'Freelance', icon: 'fa-solid fa-laptop-code' },
+      { id: 'investment', name: 'Investment', icon: 'fa-solid fa-chart-line' },
+      { id: 'business', name: 'Business', icon: 'fa-solid fa-briefcase' }
     ],
     expense: [
-      { id: 'rent', name: 'Rent', icon: 'fa-home' },
-      { id: 'transportation', name: 'Transportation', icon: 'fa-car' },
-      { id: 'food', name: 'Food', icon: 'fa-utensils' },
-      { id: 'shopping', name: 'Shopping', icon: 'fa-shopping-bag' },
-      { id: 'entertainment', name: 'Entertainment', icon: 'fa-film' },
-      { id: 'medical', name: 'Medical', icon: 'fa-hospital' },
-      { id: 'subscriptions', name: 'Subscriptions', icon: 'fa-calendar-check' },
-      { id: 'utilities', name: 'Utilities', icon: 'fa-bolt' },
-      { id: 'card-payment', name: 'Card Payment', icon: 'fa-credit-card' },
-      { id: 'groceries', name: 'Groceries', icon: 'fa-shopping-cart' },
-      { id: 'home-appliances', name: 'Home Appliances', icon: 'fa-blender' },
-      { id: 'vacation', name: 'Vacation', icon: 'fa-plane' },
-      { id: 'dining', name: 'Dining', icon: 'fa-utensils' },
-      { id: 'drinks', name: 'Drinks', icon: 'fa-cocktail' },
-      { id: 'others', name: 'Others', icon: 'fa-ellipsis-h' }
+      { id: 'rent', name: 'Rent', icon: 'fa-solid fa-house' },
+      { id: 'transportation', name: 'Transportation', icon: 'fa-solid fa-car' },
+      { id: 'food', name: 'Food', icon: 'fa-solid fa-utensils' },
+      { id: 'shopping', name: 'Shopping', icon: 'fa-solid fa-shopping-bag' },
+      { id: 'entertainment', name: 'Entertainment', icon: 'fa-solid fa-film' },
+      { id: 'medical', name: 'Medical', icon: 'fa-solid fa-hospital' },
+      { id: 'subscriptions', name: 'Subscriptions', icon: 'fa-solid fa-calendar-check' },
+      { id: 'utilities', name: 'Utilities', icon: 'fa-solid fa-bolt' },
+      { id: 'card-payment', name: 'Card Payment', icon: 'fa-solid fa-credit-card' },
+      { id: 'groceries', name: 'Groceries', icon: 'fa-solid fa-shopping-cart' },
+      { id: 'home-appliances', name: 'Home Appliances', icon: 'fa-solid fa-blender' },
+      { id: 'vacation', name: 'Vacation', icon: 'fa-solid fa-plane' },
+      { id: 'dining', name: 'Dining', icon: 'fa-solid fa-utensils' },
+      { id: 'drinks', name: 'Drinks', icon: 'fa-solid fa-glass-martini' },
+      { id: 'others', name: 'Others', icon: 'fa-solid fa-ellipsis-h' }
     ],
     investment: [
-      { id: 'gold', name: 'Gold', icon: 'fa-coins' },
-      { id: 'mutual-fund', name: 'Mutual Fund', icon: 'fa-chart-pie' },
-      { id: 'stock', name: 'Stock', icon: 'fa-chart-line' },
-      { id: 'property', name: 'Property', icon: 'fa-building' }
+      { id: 'gold', name: 'Gold', icon: 'fa-solid fa-coins' },
+      { id: 'mutual-fund', name: 'Mutual Fund', icon: 'fa-solid fa-chart-pie' },
+      { id: 'stock', name: 'Stock', icon: 'fa-solid fa-chart-line' },
+      { id: 'property', name: 'Property', icon: 'fa-solid fa-building' }
     ],
     liability: [
-      { id: 'loan', name: 'Loan', icon: 'fa-hand-holding-usd' },
-      { id: 'car-loan', name: 'Car Loan', icon: 'fa-car' },
-      { id: 'credit-card', name: 'Credit Card', icon: 'fa-credit-card' }
+      { id: 'loan', name: 'Loan', icon: 'fa-solid fa-hand-holding-usd' },
+      { id: 'car-loan', name: 'Car Loan', icon: 'fa-solid fa-car' },
+      { id: 'credit-card', name: 'Credit Card', icon: 'fa-solid fa-credit-card' }
     ]
-  };
+  }), []);
   
   // User transactions state
   type Transaction = {
@@ -147,6 +274,26 @@ const Home: React.FC = () => {
   const [totalInvestment, setTotalInvestment] = useState<number>(0);
   const [totalLiability, setTotalLiability] = useState<number>(0);
   const [totalBalance, setTotalBalance] = useState<number>(0);
+  
+  // Memoize recent transactions to prevent re-renders
+  const recentTransactions = useMemo(() => 
+    userTransactions.slice(0, 5).map((transaction) => (
+      <TransactionItem 
+        key={transaction.id}
+        transaction={transaction}
+        formatCurrency={formatCurrency}
+        getCategoryIcon={getCategoryIcon}
+        onDelete={async (id) => {
+          if (currentUser) {
+            try {
+              await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', id));
+            } catch (error) {
+              console.error('Error deleting transaction:', error);
+            }
+          }
+        }}
+      />
+    )), [userTransactions, formatCurrency, getCategoryIcon, currentUser]);
   
   // Fetch user transactions from Firestore
   useEffect(() => {
@@ -281,6 +428,7 @@ const Home: React.FC = () => {
   useEffect(() => {
     if (!currentUser || budgetLimits.length === 0) return;
 
+    // Use function from outside the effect to prevent unnecessary recreations
     const checkAndSendNotifications = async () => {
       // Calculate expenses by category
       const expensesByCategory: Record<string, number> = {};
@@ -339,15 +487,15 @@ const Home: React.FC = () => {
   }, [budgetLimits, notifications, userTransactions, currentUser, sendPushNotification]);
 
   // Handle pull-to-refresh functionality for mobile devices
-  const handleTouchStart = (e: React.TouchEvent) => {
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
     // Store the initial touch position for pull-to-refresh calculation
     const touchY = e.touches[0].clientY;
     const element = e.currentTarget;
     
     element.setAttribute('data-touch-start-y', touchY.toString());
-  };
+  }, []);
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
     const element = e.currentTarget;
     const touchStartY = parseInt(element.getAttribute('data-touch-start-y') || '0');
     const touchY = e.touches[0].clientY;
@@ -358,9 +506,9 @@ const Home: React.FC = () => {
       e.preventDefault();
       element.classList.add('refreshing');
     }
-  };
+  }, []);
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     const element = e.currentTarget;
     
     if (element.classList.contains('refreshing')) {
@@ -368,7 +516,7 @@ const Home: React.FC = () => {
       // Perform refresh action - for a PWA this would typically reload data from cache/network
       window.location.reload();
     }
-  };
+  }, []);
 
   return (
     <div 
@@ -388,6 +536,7 @@ const Home: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
           whileHover={{ scale: 1.02 }}
+          style={{ willChange: 'transform' }}
         >
           <div className="absolute top-0 right-0 w-32 h-32 bg-purple-100 dark:bg-purple-900/20 rounded-full -mr-16 -mt-16 opacity-50"></div>
           <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-100 dark:bg-purple-900/20 rounded-full -ml-12 -mb-12 opacity-50"></div>
@@ -526,43 +675,8 @@ const Home: React.FC = () => {
                 </button>
               </div>
             ) : (
-              userTransactions.slice(0, 5).map((transaction: {
-                id: string;
-                type: string;
-                amount: number;
-                category: string;
-                date: string;
-              }) => (
-                <div key={transaction.id} className="group bg-white dark:bg-gray-800 rounded-lg shadow-sm p-3 flex items-center justify-between transform transition-all duration-300 hover:scale-[1.02] hover:shadow-md">
-                  <div className="flex items-center">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
-                      transaction.type === 'income' ? 'bg-purple-100 dark:bg-purple-900' :
-                      transaction.type === 'expense' ? 'bg-red-100 dark:bg-red-900' :
-                      transaction.type === 'investment' ? 'bg-blue-100 dark:bg-blue-900' :
-                      'bg-yellow-100 dark:bg-yellow-900'
-                    }`}>
-                      <i className={`${getCategoryIcon(transaction.category, transaction.type)} ${
-                        transaction.type === 'income' ? 'text-purple-500' :
-                        transaction.type === 'expense' ? 'text-red-500' :
-                        transaction.type === 'investment' ? 'text-blue-500' :
-                        'text-yellow-500'
-                      }`}></i>
-                    </div>
-                    <div>
-                      <div className="font-medium text-gray-800 dark:text-white">{transaction.category}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">{formatDateTime(transaction.date)}</div>
-                    </div>
-                  </div>
-                  <div className={`font-semibold mr-3 ${
-                    transaction.type === 'income' ? 'text-purple-500' :
-                    transaction.type === 'expense' ? 'text-red-500' :
-                    transaction.type === 'investment' ? 'text-blue-500' :
-                    'text-yellow-500'
-                  }`}>
-                    {transaction.type === 'income' || transaction.type === 'investment' ? '+' : '-'}{formatCurrency(transaction.amount)}
-                  </div>
-                </div>
-              ))
+              /* Use the memoized value directly */
+              recentTransactions
             )}
           </div>
         </div>
@@ -581,47 +695,22 @@ const Home: React.FC = () => {
           </div>
           <div className="space-y-4">
             {budgetLimits.map((budget, index) => (
-              <motion.div 
+              <BudgetLimitItem 
                 key={index} 
-                className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 * index, duration: 0.3 }}
-                whileHover={{ scale: 1.02, boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.1)" }}
-              >
-                <div className="flex justify-between mb-1">
-                  <span className="font-medium text-gray-800 dark:text-white">{budget.category}</span>
-                  <div className="flex items-center">
-                    <span className="text-gray-600 dark:text-gray-300 mr-2">
-                      {formatCurrency(budget.spent)} / {formatCurrency(budget.limit)}
-                    </span>
-                    <button 
-                      className="focus:outline-none p-0 bg-transparent shadow-none border-none"
-                      onClick={async () => {
-                        if (currentUser) {
-                          try {
-                            // Delete budget limit from Firestore
-                            await deleteDoc(doc(db, 'users', currentUser.uid, 'budgetLimits', budget.id));
-                          } catch (error) {
-                            console.error('Error deleting budget limit:', error);
-                          }
-                        }
-                      }}
-                    >
-                      <i className="fa-solid fa-trash-alt text-sm text-red-500 dark:text-red-400 hover:text-red-600 focus:text-red-600 transition-colors duration-200"></i>
-                    </button>
-                  </div>
-                </div>
-                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mb-1">
-                  <div 
-                    className={`h-2.5 rounded-full ${
-                      (budget.spent / budget.limit) > 0.9 ? 'bg-red-500' :
-                      (budget.spent / budget.limit) > 0.7 ? 'bg-purple-500' : 'bg-purple-500'
-                    }`} 
-                    style={{ width: `${Math.min((budget.spent / budget.limit) * 100, 100)}%` }}
-                  ></div>
-                </div>
-              </motion.div>
+                budget={budget} 
+                index={index} 
+                formatCurrency={formatCurrency}
+                onDelete={async (id) => {
+                  if (currentUser) {
+                    try {
+                      // Delete budget limit from Firestore
+                      await deleteDoc(doc(db, 'users', currentUser.uid, 'budgetLimits', id));
+                    } catch (error) {
+                      console.error('Error deleting budget limit:', error);
+                    }
+                  }
+                }}
+              />
             ))}
           </div>
         </div>
@@ -647,10 +736,11 @@ const Home: React.FC = () => {
           <style>{`.fab { display: none !important; }`}</style>
           <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 modal-overlay">
             <motion.div 
-              className="bg-white dark:bg-gray-900 rounded-xl w-11/12 max-w-md p-5 shadow-xl text-gray-900 dark:text-gray-100"
+              className="bg-white dark:bg-gray-900 rounded-xl w-11/12 max-w-md p-5 shadow-xl text-gray-900 dark:text-gray-100 max-h-[80vh] flex flex-col"
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.3 }}
+              style={{ willChange: 'transform' }}
             >
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-semibold text-gray-800 dark:text-white">Add Transaction</h3>
@@ -696,7 +786,7 @@ const Home: React.FC = () => {
                   </div>
                 </div>
               </div>
-              <div className="space-y-4">
+              <div className="space-y-4 overflow-y-auto flex-1">
                 {/* Amount input */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount</label>
@@ -729,7 +819,7 @@ const Home: React.FC = () => {
                         }`}
                         onClick={() => setCategory(cat.name)}
                       >
-                        <i className={`fa-solid ${cat.icon} text-xl mb-1`}></i>
+                        <i className={`${cat.icon} text-xl mb-1`}></i>
                         <span className="text-xs whitespace-nowrap overflow-hidden text-ellipsis w-full text-center">
                           {cat.name}
                         </span>
@@ -807,6 +897,7 @@ const Home: React.FC = () => {
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3 }}
+            style={{ willChange: 'transform' }}
           >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-gray-800 dark:text-white">Add Budget Limit</h3>
@@ -893,14 +984,14 @@ const Home: React.FC = () => {
         </div>
       )}
       
-      {/* All Transactions Modal */}
-      {showAllTransactionsModal && (
+      {/* All Transactions Modal */}          {showAllTransactionsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 modal-overlay">
           <motion.div
             className="bg-white dark:bg-gray-900 rounded-xl w-11/12 max-w-md p-5 shadow-xl text-gray-900 dark:text-gray-100 max-h-[80vh] overflow-y-auto"
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3 }}
+            style={{ willChange: 'transform' }}
           >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-gray-800 dark:text-white">All Transactions</h3>
@@ -917,54 +1008,21 @@ const Home: React.FC = () => {
                 <div className="text-center text-gray-500 dark:text-gray-400">No transactions found.</div>
               ) : (
                 userTransactions.map((transaction) => (
-                  <div key={transaction.id} className="group bg-white dark:bg-gray-800 rounded-lg shadow-sm p-3 flex items-center justify-between transform transition-all duration-300 hover:scale-[1.02] hover:shadow-md">
-                    <div className="flex items-center">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
-                        transaction.type === 'income' ? 'bg-purple-100 dark:bg-purple-900' :
-                        transaction.type === 'expense' ? 'bg-red-100 dark:bg-red-900' :
-                        transaction.type === 'investment' ? 'bg-blue-100 dark:bg-blue-900' :
-                        'bg-yellow-100 dark:bg-yellow-900'
-                      }`}>
-                        <i className={`${getCategoryIcon(transaction.category, transaction.type)} ${
-                          transaction.type === 'income' ? 'text-purple-500' :
-                          transaction.type === 'expense' ? 'text-red-500' :
-                          transaction.type === 'investment' ? 'text-blue-500' :
-                          'text-yellow-500'
-                        }`}></i>
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-800 dark:text-white">{transaction.category}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">{formatDateTime(transaction.date)}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center">
-                      <div className={`font-semibold mr-3 ${
-                        transaction.type === 'income' ? 'text-purple-500' :
-                        transaction.type === 'expense' ? 'text-red-500' :
-                        transaction.type === 'investment' ? 'text-blue-500' :
-                        'text-yellow-500'
-                      }`}>
-                        {transaction.type === 'income' || transaction.type === 'investment' ? '+' : '-'}{formatCurrency(transaction.amount)}
-                      </div>
-                      <button
-                        className="focus:outline-none p-0 bg-transparent shadow-none border-none"
-                        tabIndex={0}
-                        aria-label="Delete transaction"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (currentUser) {
-                            try {
-                              await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', transaction.id));
-                            } catch (error) {
-                              console.error('Error deleting transaction:', error);
-                            }
-                          }
-                        }}
-                      >
-                        <i className="fa-solid fa-trash-alt text-lg text-red-400 hover:text-red-500 focus:text-red-600 transition-colors duration-200"></i>
-                      </button>
-                    </div>
-                  </div>
+                  <TransactionItem 
+                    key={transaction.id}
+                    transaction={transaction}
+                    formatCurrency={formatCurrency}
+                    getCategoryIcon={getCategoryIcon}
+                    onDelete={async (id) => {
+                      if (currentUser) {
+                        try {
+                          await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', id));
+                        } catch (error) {
+                          console.error('Error deleting transaction:', error);
+                        }
+                      }
+                    }}
+                  />
                 ))
               )}
             </div>
