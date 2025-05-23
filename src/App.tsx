@@ -10,9 +10,10 @@ import Profile from "./pages/Profile";
 import Notifications from "./pages/Notifications";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { FinanceProvider } from "./contexts/FinanceContext";
+import { NotificationProvider } from "./components/NotificationProvider";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navigation from "./components/Navigation";
-import './styles/App.css'; // Import your global CSS file
+import './styles/index.css'; // Import your global CSS file
 
 // Initialize dark mode from localStorage or system preference on page load
 function initializeDarkMode() {
@@ -122,13 +123,15 @@ function App() {
     <Router>
       <AuthProvider>
         <FinanceProvider>
-          {isOffline && (
-            <div className="fixed top-0 left-0 right-0 bg-yellow-500 text-white p-2 text-center z-50">
-              You are currently offline. Some features may be limited.
-            </div>
-          )}
-          <AppRoutes />
-          <Navigation />
+          <NotificationProvider>
+            {isOffline && (
+              <div className="fixed top-0 left-0 right-0 bg-yellow-500 text-white p-2 text-center z-50">
+                You are currently offline. Some features may be limited.
+              </div>
+            )}
+            <AppRoutes />
+            <Navigation />
+          </NotificationProvider>
         </FinanceProvider>
       </AuthProvider>
     </Router>

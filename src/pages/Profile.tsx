@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { updateProfile, updatePassword, updateEmail } from 'firebase/auth';
 import { collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import UserManualModal from '../components/UserManualModal';
 
 const Profile: React.FC = () => {
   const { darkMode, toggleDarkMode } = useFinance();
@@ -24,6 +25,9 @@ const Profile: React.FC = () => {
   
   // State for help & support modal
   const [showSupportModal, setShowSupportModal] = useState(false);
+  
+  // State for user manual modal
+  const [showUserManualModal, setShowUserManualModal] = useState(false);
 
   // Update display name when currentUser changes
   useEffect(() => {
@@ -110,8 +114,9 @@ const Profile: React.FC = () => {
         setShowSecurityModal(false);
         setSecuritySuccess('');
       }, 2000);
-    } catch (error: any) {
-      setSecurityError(error.message || 'Failed to update profile');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to update profile';
+      setSecurityError(errorMessage);
     }
   };
 
@@ -204,6 +209,20 @@ const Profile: React.FC = () => {
                 <i className="fa-solid fa-lock text-purple-500"></i>
               </div>
               <span className="text-gray-800 dark:text-white">Security</span>
+            </div>
+            <i className="fa-solid fa-chevron-right text-gray-400"></i>
+          </div>
+
+          {/* User Manual */}
+          <div 
+            className="flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
+            onClick={() => setShowUserManualModal(true)}
+          >
+            <div className="flex items-center">
+              <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900 flex items-center justify-center mr-3">
+                <i className="fa-solid fa-book text-purple-500"></i>
+              </div>
+              <span className="text-gray-800 dark:text-white">User Manual</span>
             </div>
             <i className="fa-solid fa-chevron-right text-gray-400"></i>
           </div>
@@ -305,6 +324,12 @@ const Profile: React.FC = () => {
         </div>
       )}
 
+      {/* User Manual Modal */}
+      <UserManualModal
+        showModal={showUserManualModal}
+        onClose={() => setShowUserManualModal(false)}
+      />
+
       {/* Help & Support Modal */}
       {showSupportModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -381,6 +406,12 @@ const Profile: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Copyright Footer */}
+      <footer className="mt-8 text-center text-xs text-gray-500 dark:text-gray-400 pb-4">
+        <p>© {new Date().getFullYear()} Wintech - Finflow. All rights reserved.</p>
+        <p className="mt-1">Version 1.0.0</p>
+      </footer>
     </div>
   );
 };

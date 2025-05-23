@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFinance } from '../contexts/FinanceContext';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, onSnapshot, deleteDoc, doc, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, deleteDoc, doc, orderBy, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import GoalModal from '../components/GoalModal';
+import ProgressUpdateModal from '../components/ProgressUpdateModal';
 
 interface Goal {
   id: string;
@@ -14,7 +15,7 @@ interface Goal {
   category: string;
   note: string;
   userId: string;
-  createdAt: any;
+  createdAt: import('firebase/firestore').Timestamp | null;
 }
 
 const Goals: React.FC = () => {
@@ -24,6 +25,9 @@ const Goals: React.FC = () => {
   const [showGoalModal, setShowGoalModal] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedGoalCategory, setSelectedGoalCategory] = useState<string | null>(null);
+  const [currentGoal, setCurrentGoal] = useState<Goal | null>(null);
+  const [showProgressModal, setShowProgressModal] = useState<boolean>(false);
+  const [progressGoal, setProgressGoal] = useState<Goal | null>(null);
 
   // Fetch goals from Firestore
   useEffect(() => {
@@ -58,14 +62,40 @@ const Goals: React.FC = () => {
   }, [currentUser]);
 
   const handleAddNewGoal = useCallback((category?: string) => {
+    setCurrentGoal(null);
     setSelectedGoalCategory(category || null);
     setShowGoalModal(true);
   }, []);
 
-  const handleSaveGoal = (_goal: Goal) => {
+  const handleEditGoal = useCallback((goal: Goal) => {
+    setCurrentGoal(goal);
+    setSelectedGoalCategory(goal.category);
+    setShowGoalModal(true);
+  }, []);
+
+  const handleSaveGoal = () => {
     // The goal is already saved to Firestore in the modal component
     // onSnapshot will handle updating the UI
     setSelectedGoalCategory(null);
+    setCurrentGoal(null);
+  };
+
+  const handleOpenProgressModal = useCallback((goal: Goal) => {
+    setProgressGoal(goal);
+    setShowProgressModal(true);
+  }, []);
+
+  const handleUpdateGoalProgress = async (goalId: string, currentAmount: number) => {
+    try {
+      if (!currentUser) return;
+      const goalRef = doc(db, `users/${currentUser.uid}/goals`, goalId);
+      await updateDoc(goalRef, {
+        current: currentAmount
+      });
+      // onSnapshot will handle updating the UI
+    } catch (error) {
+      console.error("Error updating goal progress:", error);
+    }
   };
 
   const handleDeleteGoal = async (goalId: string) => {
@@ -117,16 +147,32 @@ const Goals: React.FC = () => {
         onClose={() => setShowGoalModal(false)} 
         onSave={handleSaveGoal}
         initialCategory={selectedGoalCategory}
+        goalToEdit={currentGoal}
       />
+      
+      {progressGoal && (
+        <ProgressUpdateModal
+          showModal={showProgressModal}
+          onClose={() => setShowProgressModal(false)}
+          onUpdate={(amount) => {
+            if (progressGoal) {
+              handleUpdateGoalProgress(progressGoal.id, amount);
+            }
+          }}
+          currentAmount={progressGoal.current}
+          targetAmount={progressGoal.target}
+        />
+      )}
       
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Financial Goals</h2>
           <button
             onClick={() => handleAddNewGoal()}
-            className="bg-purple-500 hover:bg-purple-600 text-white p-2 rounded-lg text-sm"
+            className="bg-purple-500 hover:bg-purple-600 text-white p-2 rounded-full flex items-center justify-center w-10 h-10"
+            aria-label="New Goal"
           >
-            <i className="fa-solid fa-plus mr-1"></i> New Goal
+            <i className="fa-solid fa-plus"></i>
           </button>
         </div>
         
@@ -144,23 +190,12 @@ const Goals: React.FC = () => {
             {goals.map((goal) => (
               <div 
                 key={goal.id} 
-                className="bg-white dark:bg-gray-700 rounded-lg shadow-sm p-4 border border-gray-100 dark:border-gray-800 transform transition-all duration-300 hover:scale-[1.02] hover:shadow-md relative"
+                className="bg-white dark:bg-gray-700 rounded-lg shadow-sm p-4 border border-gray-100 dark:border-gray-800 transform transition-all duration-300 hover:shadow-md relative"
               >
-                <div className="absolute top-2 right-2">
-                  <button 
-                    onClick={() => handleDeleteGoal(goal.id)}
-                    className="text-gray-400 hover:text-red-500 transition-colors duration-200 p-2 rounded-full hover:bg-red-50 dark:hover:bg-red-900"
-                    aria-label="Delete goal"
-                    title="Delete goal"
-                  >
-                    <i className="fa-solid fa-trash-alt"></i>
-                  </button>
-                </div>
-                
-                <div className="flex justify-between items-start mb-2 pr-6">
+                <div className="flex justify-between items-start mb-3">
                   <div className="flex items-center">
-                    <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900 flex items-center justify-center mr-3">
-                      <i className={`${getCategoryIcon(goal.category)} text-purple-500`}></i>
+                    <div className="w-10 h-10 rounded-full bg-transparent flex items-center justify-center mr-3">
+                      <i className={`${getCategoryIcon(goal.category)} text-purple-500 text-xl`}></i>
                     </div>
                     <div>
                       <h3 className="font-medium text-gray-800 dark:text-white">{goal.name}</h3>
@@ -172,9 +207,9 @@ const Goals: React.FC = () => {
                     <p className="text-xs text-gray-500 dark:text-gray-400">{calculateDaysRemaining(goal.deadline)} days left</p>
                   </div>
                 </div>
-                <div className="w-full bg-gray-100 dark:bg-gray-600 rounded-full h-2.5 mb-2">
+                <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mb-2">
                   <div 
-                    className="bg-purple-500 h-2.5 rounded-full" 
+                    className="bg-purple-500 h-1.5 rounded-full" 
                     style={{ width: `${calculateProgress(goal.current, goal.target)}%` }}
                   ></div>
                 </div>
@@ -182,6 +217,45 @@ const Goals: React.FC = () => {
                   <span className="text-gray-600 dark:text-gray-300">{formatCurrency(goal.current)}</span>
                   <span className="text-gray-600 dark:text-gray-300">{calculateProgress(goal.current, goal.target)}%</span>
                 </div>
+                
+                {/* Action buttons in a single row */}
+                <div className="mt-3 flex justify-center space-x-6 border-t pt-3 dark:border-gray-600">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditGoal(goal);
+                    }}
+                    className="text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors flex items-center bg-transparent"
+                    aria-label="Edit goal"
+                    title="Edit goal"
+                  >
+                    <i className="fa-solid fa-pen-to-square mr-1.5"></i>
+                    Edit
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenProgressModal(goal);
+                    }}
+                    className="text-xs text-purple-500 hover:text-purple-600 dark:hover:text-purple-400 transition-colors flex items-center bg-transparent"
+                  >
+                    <i className="fa-solid fa-chart-line mr-1.5"></i>
+                    Update Progress
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteGoal(goal.id);
+                    }}
+                    className="text-xs text-red-500 hover:text-red-600 dark:hover:text-red-400 transition-colors flex items-center bg-transparent"
+                    aria-label="Delete goal"
+                    title="Delete goal"
+                  >
+                    <i className="fa-solid fa-trash-alt mr-1.5"></i>
+                    Delete
+                  </button>
+                </div>
+                
                 {goal.note && (
                   <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
                     Note: {goal.note}
@@ -207,7 +281,7 @@ const Goals: React.FC = () => {
               className="flex items-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg cursor-pointer transform transition-all duration-300 hover:scale-[1.02] hover:bg-purple-50 dark:hover:bg-purple-900"
               onClick={() => handleAddNewGoal(suggestion.category)}
             >
-              <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900 flex items-center justify-center mr-3">
+              <div className="w-10 h-10 rounded-full bg-transparent flex items-center justify-center mr-3">
                 <i className={`${suggestion.icon} text-purple-500`}></i>
               </div>
               <div className="flex-1">

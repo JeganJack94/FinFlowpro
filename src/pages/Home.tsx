@@ -6,28 +6,26 @@ import { useAuth } from '../contexts/AuthContext';
 import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import PWAPrompt from '../components/PWAPrompt';
+import { useNotification } from '../components/NotificationProvider';
+import type { Timestamp } from 'firebase/firestore';
 
 // Helper function to format date and time
 const formatDateTime = (dateTimeString: string): string => {
   if (!dateTimeString) return '';
-  
   try {
     const date = new Date(dateTimeString);
     if (isNaN(date.getTime())) return dateTimeString;
-    
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const year = date.getFullYear();
     const month = months[date.getMonth()];
     const day = date.getDate();
-    
+    const year = date.getFullYear();
     let hours = date.getHours();
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const ampm = hours >= 12 ? 'PM' : 'AM';
-    
     hours = hours % 12;
-    hours = hours ? hours : 12; // Convert 0 to 12
-    
-    return `${year}-${month}-${day} ${hours}:${minutes} ${ampm}`;
+    hours = hours ? hours : 12;
+
+    return `${month} ${day}, ${year} ${hours}:${minutes} ${ampm}`;
   } catch (error) {
     console.error('Error formatting date:', error);
     return dateTimeString;
@@ -42,6 +40,7 @@ const Home: React.FC = () => {
   
   const { currentUser } = useAuth();
   const navigate = useNavigate();
+  const { sendPushNotification } = useNotification();
   
   // Transaction modal states
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
@@ -61,10 +60,13 @@ const Home: React.FC = () => {
   const [notificationThreshold, setNotificationThreshold] = useState<number>(80);
   
   // Budget limits state
-  const [budgetLimits, setBudgetLimits] = useState<any[]>([]);
+  const [budgetLimits, setBudgetLimits] = useState<BudgetLimit[]>([]);
   
   // Notifications state
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  
+  // All transactions modal state
+  const [showAllTransactionsModal, setShowAllTransactionsModal] = useState(false);
   
   // Category options for each transaction type
   const categoryOptions = {
@@ -83,6 +85,7 @@ const Home: React.FC = () => {
       { id: 'medical', name: 'Medical', icon: 'fa-hospital' },
       { id: 'subscriptions', name: 'Subscriptions', icon: 'fa-calendar-check' },
       { id: 'utilities', name: 'Utilities', icon: 'fa-bolt' },
+      { id: 'card-payment', name: 'Card Payment', icon: 'fa-credit-card' },
       { id: 'groceries', name: 'Groceries', icon: 'fa-shopping-cart' },
       { id: 'home-appliances', name: 'Home Appliances', icon: 'fa-blender' },
       { id: 'vacation', name: 'Vacation', icon: 'fa-plane' },
@@ -106,14 +109,38 @@ const Home: React.FC = () => {
   // User transactions state
   type Transaction = {
     id: string;
-    type: string;
+    type: 'income' | 'expense' | 'investment' | 'liability';
     amount: number;
     category: string;
     date: string;
     note?: string;
-    timestamp?: any;
+    timestamp?: Timestamp | null;
     userId?: string;
   };
+
+  type BudgetLimit = {
+    id: string;
+    category: string;
+    limit: number;
+    spent: number;
+    notificationThreshold: number;
+    userId?: string;
+    timestamp?: Timestamp | null;
+    lastNotificationDate?: string | null;
+    notificationSent?: boolean;
+  };
+
+  type UserNotification = {
+    id: string;
+    title: string;
+    message: string;
+    category: string;
+    type: string;
+    timestamp?: Timestamp | null;
+    read: boolean;
+    createdDate: string;
+  };
+
   const [userTransactions, setUserTransactions] = useState<Transaction[]>([]);
   const [totalIncome, setTotalIncome] = useState<number>(0);
   const [totalExpense, setTotalExpense] = useState<number>(0);
@@ -124,14 +151,14 @@ const Home: React.FC = () => {
   // Fetch user transactions from Firestore
   useEffect(() => {
     if (!currentUser) return;
-    
+
     // Set up real-time listener for transactions
     const transactionsRef = collection(db, 'users', currentUser.uid, 'transactions');
     const transactionsQuery = query(
       transactionsRef,
       orderBy('timestamp', 'desc')
     );
-     const unsubscribe = onSnapshot(transactionsQuery, async (snapshot) => {
+    const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
       const transactions: Transaction[] = snapshot.docs.map(doc => {
         const data = doc.data();
         return {
@@ -164,7 +191,6 @@ const Home: React.FC = () => {
           income += amount;
         } else if (transaction.type === 'expense') {
           expense += amount;
-          
           // Track expenses by category for budget limits
           const category = transaction.category;
           if (category) {
@@ -182,141 +208,135 @@ const Home: React.FC = () => {
       setTotalInvestment(investment);
       setTotalLiability(liability);
       setTotalBalance(income - expense);
-
-      // Update budget limits with actual spending
-      if (budgetLimits.length > 0) {
-        const updatedLimits = await Promise.all(budgetLimits.map(async (limit) => {
-          const spent = expensesByCategory[limit.category] || 0;
-          
-          // Check if notifications are enabled in user preferences
-          const notificationsEnabled = localStorage.getItem('notifications') === 'true';
-          
-          // Only proceed if notifications are enabled
-          if (notificationsEnabled) {
-            // Calculate percentage spent
-            const percentSpentValue = (spent / limit.limit) * 100;
-            
-            // Current date as YYYY-MM-DD format for tracking daily notifications
-            const today = new Date().toISOString().split('T')[0];
-            
-            // Check if we should send a notification:
-            // 1. Must be over threshold
-            // 2. Either no last notification date or it wasn't today
-            if (percentSpentValue >= limit.notificationThreshold && 
-                (!limit.lastNotificationDate || limit.lastNotificationDate !== today)) {
-              
-              // Check if we already have a notification for this budget limit from today
-              const existingTodayNotification = notifications.find(notif => 
-                notif.category === limit.category && 
-                notif.type === 'budget-alert' &&
-                notif.createdDate === today && 
-                !notif.read // only count unread notifications
-              );
-              
-              // Only send notification if one doesn't already exist for today
-              if (!existingTodayNotification && currentUser) {
-                console.log(`Creating notification for ${limit.category} budget (${percentSpentValue.toFixed(0)}%)`);
-                
-                try {
-                  // Create a notification for exceeded threshold
-                  const newNotification = {
-                    title: 'Budget Alert',
-                    message: `You've used ${percentSpentValue.toFixed(0)}% of your ${limit.category} budget`,
-                    category: limit.category,
-                    type: 'budget-alert',
-                    timestamp: serverTimestamp(),
-                    read: false,
-                    createdDate: today
-                  };
-                
-                  // Add notification to Firestore
-                  const notificationDocRef = await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), newNotification);
-                  console.log(`Added notification with ID: ${notificationDocRef.id}`);
-                  
-                  // Update the budget limit in Firestore to track when we sent the notification
-                  const budgetRef = doc(db, 'users', currentUser.uid, 'budgetLimits', limit.id);
-                  await updateDoc(budgetRef, { 
-                    lastNotificationDate: today
-                  });
-                  console.log(`Updated budget limit with lastNotificationDate: ${today}`);
-                  
-                  // Return updated limit object
-                  return { 
-                    ...limit, 
-                    spent, 
-                    lastNotificationDate: today
-                  };
-                } catch (error) {
-                  console.error('Error in notification/budget update process:', error);
-                  return { ...limit, spent };
-                }
-              }
-            }
-          }
-          
-          // If no notification needed to be sent
-          return { ...limit, spent };
-        }));
-        
-        setBudgetLimits(updatedLimits);
-      }
     });
-    
+
     return () => unsubscribe();
-  }, [currentUser, budgetLimits, notifications]);
+  }, [currentUser]);
 
   // Fetch budget limits from Firestore
   useEffect(() => {
     if (!currentUser) return;
-    
+
     // Set up real-time listener for budget limits
     const budgetLimitsRef = collection(db, 'users', currentUser.uid, 'budgetLimits');
     const budgetLimitsQuery = query(
       budgetLimitsRef,
       orderBy('timestamp', 'desc')
     );
-    
+
     const unsubscribe = onSnapshot(budgetLimitsQuery, (snapshot) => {
-      const limits = snapshot.docs.map(doc => {
+      const limits: BudgetLimit[] = snapshot.docs.map(doc => {
         const data = doc.data();
-        // Only reset notification status if notifications are enabled
         const notificationsEnabled = localStorage.getItem('notifications') === 'true';
         return {
           id: doc.id,
-          ...data,
-          // If notifications are disabled, keep the sent status to prevent new notifications
+          category: data.category ?? '',
+          limit: typeof data.limit === 'number' ? data.limit : 0,
+          spent: typeof data.spent === 'number' ? data.spent : 0,
+          notificationThreshold: typeof data.notificationThreshold === 'number' ? data.notificationThreshold : 80,
+          userId: data.userId,
+          timestamp: data.timestamp,
+          lastNotificationDate: data.lastNotificationDate ?? null,
           notificationSent: notificationsEnabled ? (data.notificationSent || false) : true
         };
       });
-      
       setBudgetLimits(limits);
     });
-    
+
     return () => unsubscribe();
   }, [currentUser]);
-  
+
   // Fetch notifications from Firestore
   useEffect(() => {
     if (!currentUser) return;
-    
+
     // Set up real-time listener for notifications
     const notificationsRef = collection(db, 'users', currentUser.uid, 'notifications');
     const notificationsQuery = query(
       notificationsRef,
       orderBy('timestamp', 'desc')
     );
-    
+
     const unsubscribe = onSnapshot(notificationsQuery, (snapshot) => {
-      const userNotifications = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      const userNotifications: UserNotification[] = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          title: data.title ?? '',
+          message: data.message ?? '',
+          category: data.category ?? '',
+          type: data.type ?? '',
+          timestamp: data.timestamp,
+          read: !!data.read,
+          createdDate: data.createdDate ?? ''
+        };
+      });
       setNotifications(userNotifications);
     });
-    
+
     return () => unsubscribe();
   }, [currentUser]);
+
+  // Separate effect for budget notification logic
+  useEffect(() => {
+    if (!currentUser || budgetLimits.length === 0) return;
+
+    const checkAndSendNotifications = async () => {
+      // Calculate expenses by category
+      const expensesByCategory: Record<string, number> = {};
+      userTransactions.forEach(transaction => {
+        if (transaction.type === 'expense') {
+          const category = transaction.category;
+          if (category) {
+            expensesByCategory[category] = (expensesByCategory[category] || 0) + (transaction.amount || 0);
+          }
+        }
+      });
+
+      for (const limit of budgetLimits) {
+        const spent = expensesByCategory[limit.category] || 0;
+        const notificationsEnabled = localStorage.getItem('notifications') === 'true';
+        const percentSpentValue = (spent / limit.limit) * 100;
+        const today = new Date().toISOString().split('T')[0];
+        if (
+          notificationsEnabled &&
+          percentSpentValue >= limit.notificationThreshold &&
+          (!limit.lastNotificationDate || limit.lastNotificationDate !== today)
+        ) {
+          const existingTodayNotification = notifications.find(notif =>
+            notif.category === limit.category &&
+            notif.type === 'budget-alert' &&
+            notif.createdDate === today &&
+            !notif.read
+          );
+          if (!existingTodayNotification && currentUser) {
+            try {
+              const newNotification = {
+                title: 'Budget Alert',
+                message: `You've used ${percentSpentValue.toFixed(0)}% of your ${limit.category} budget`,
+                category: limit.category,
+                type: 'budget-alert',
+                timestamp: serverTimestamp(),
+                read: false,
+                createdDate: today
+              };
+              await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), newNotification);
+              const budgetRef = doc(db, 'users', currentUser.uid, 'budgetLimits', limit.id);
+              await updateDoc(budgetRef, {
+                lastNotificationDate: today
+              });
+              // Send browser push notification
+              sendPushNotification('Budget Alert', `You've used ${percentSpentValue.toFixed(0)}% of your ${limit.category} budget`);
+            } catch (error) {
+              console.error('Error in notification/budget update process:', error);
+            }
+          }
+        }
+      }
+    };
+
+    checkAndSendNotifications();
+  }, [budgetLimits, notifications, userTransactions, currentUser, sendPushNotification]);
 
   // Handle pull-to-refresh functionality for mobile devices
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -352,7 +372,7 @@ const Home: React.FC = () => {
 
   return (
     <div 
-      className="flex flex-col gap-4 pb-20 max-w-md mx-auto w-full overscroll-contain touch-manipulation"
+      className="flex flex-col gap-4 pb-20 max-w-md mx-auto w-full overscroll-contain touch-manipulation bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -481,7 +501,15 @@ const Home: React.FC = () => {
           </motion.div>
         </div>
         <div className="mb-4">
-          <h2 className="text-lg font-semibold mb-3 text-gray-800 dark:text-white">Recent Transactions</h2>
+          <div className="flex flex-row items-center mb-3">
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-white mr-2">Recent Transactions</h2>
+            <button
+              className="ml-auto px-3 py-1 text-sm font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors duration-200"
+              onClick={() => setShowAllTransactionsModal(true)}
+            >
+              View All
+            </button>
+          </div>
           <div className="space-y-3">
             {userTransactions.length === 0 ? (
               <div className="empty-state">
@@ -525,31 +553,13 @@ const Home: React.FC = () => {
                       <div className="text-xs text-gray-500 dark:text-gray-400">{formatDateTime(transaction.date)}</div>
                     </div>
                   </div>
-                  <div className="flex items-center">
-                    <div className={`font-semibold mr-3 ${
-                      transaction.type === 'income' ? 'text-purple-500' :
-                      transaction.type === 'expense' ? 'text-red-500' :
-                      transaction.type === 'investment' ? 'text-blue-500' :
-                      'text-yellow-500'
-                    }`}>
-                      {transaction.type === 'income' || transaction.type === 'investment' ? '+' : '-'}{formatCurrency(transaction.amount)}
-                    </div>
-                    <button 
-                      className="text-gray-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (currentUser) {
-                          try {
-                            // Delete transaction from Firestore
-                            await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', transaction.id));
-                          } catch (error) {
-                            console.error('Error deleting transaction:', error);
-                          }
-                        }
-                      }}
-                    >
-                      <i className="fa-solid fa-trash-alt text-sm"></i>
-                    </button>
+                  <div className={`font-semibold mr-3 ${
+                    transaction.type === 'income' ? 'text-purple-500' :
+                    transaction.type === 'expense' ? 'text-red-500' :
+                    transaction.type === 'investment' ? 'text-blue-500' :
+                    'text-yellow-500'
+                  }`}>
+                    {transaction.type === 'income' || transaction.type === 'investment' ? '+' : '-'}{formatCurrency(transaction.amount)}
                   </div>
                 </div>
               ))
@@ -557,13 +567,14 @@ const Home: React.FC = () => {
           </div>
         </div>
         <div className="mb-4">
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Budget Limits</h2>
+          <div className="flex flex-row items-center mb-3">
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-white mr-2">Budget Limits</h2>
             <motion.button 
-              className="w-7 h-7 bg-purple-500 hover:bg-purple-600 flex items-center justify-center text-white rounded-full shadow-md"
+              className="w-7 h-7 bg-purple-500 hover:bg-purple-600 flex items-center justify-center text-white rounded-full shadow-md ml-2"
               onClick={() => setShowBudgetModal(true)}
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
+              style={{ position: 'static' }}
             >
               <i className="fa-solid fa-plus"></i>
             </motion.button>
@@ -585,7 +596,7 @@ const Home: React.FC = () => {
                       {formatCurrency(budget.spent)} / {formatCurrency(budget.limit)}
                     </span>
                     <button 
-                      className="text-gray-400 hover:text-red-500 transition-colors"
+                      className="focus:outline-none p-0 bg-transparent shadow-none border-none"
                       onClick={async () => {
                         if (currentUser) {
                           try {
@@ -597,7 +608,7 @@ const Home: React.FC = () => {
                         }
                       }}
                     >
-                      <i className="fa-solid fa-trash-alt text-sm"></i>
+                      <i className="fa-solid fa-trash-alt text-sm text-red-500 dark:text-red-400 hover:text-red-600 focus:text-red-600 transition-colors duration-200"></i>
                     </button>
                   </div>
                 </div>
@@ -631,137 +642,161 @@ const Home: React.FC = () => {
       
       {/* Transaction Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 modal-overlay">
-          <motion.div 
-            className="bg-white dark:bg-gray-800 rounded-xl w-11/12 max-w-md p-5 shadow-xl"
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.3 }}
-          >
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-semibold text-gray-800 dark:text-white">Add Transaction</h3>
-              <button
-                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                onClick={() => setShowAddModal(false)}
-              >
-                <i className="fa-solid fa-times"></i>
-              </button>
-            </div>
-            
-            <div className="mb-4">
-              <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
-                {['expense', 'income', 'investment', 'liability'].map((type) => (
-                  <button
-                    key={type}
-                    className={`flex-1 py-2 text-sm font-medium rounded-md ${
-                      transactionType === type
-                        ? 'bg-purple-500 text-white'
-                        : 'text-gray-600 dark:text-gray-300'
-                    }`}
-                    onClick={() => setTransactionType(type as 'expense' | 'income' | 'investment' | 'liability')}
-                  >
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </button>
-                ))}
+        <>
+          {/* Hide FAB when modal is open by adding a hidden class */}
+          <style>{`.fab { display: none !important; }`}</style>
+          <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 modal-overlay">
+            <motion.div 
+              className="bg-white dark:bg-gray-900 rounded-xl w-11/12 max-w-md p-5 shadow-xl text-gray-900 dark:text-gray-100"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.3 }}
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-semibold text-gray-800 dark:text-white">Add Transaction</h3>
+                <button
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white focus:outline-none focus:ring-2 focus:ring-purple-400 rounded-full p-1 transition-colors duration-200"
+                  onClick={() => setShowAddModal(false)}
+                  aria-label="Close"
+                >
+                  <i className="fa-solid fa-times"></i>
+                </button>
               </div>
-            </div>
-            
-            <div className="space-y-4">
-              {/* Amount input */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <span className="text-gray-500 dark:text-gray-400">₹</span>
+              <div className="mb-4">
+                <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1 flex-col gap-2">
+                  <div className="flex w-full gap-2">
+                    {['expense', 'income'].map((type) => (
+                      <button
+                        key={type}
+                        className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors duration-200
+                          ${transactionType === type
+                            ? 'bg-purple-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}
+                        `}
+                        onClick={() => setTransactionType(type as 'expense' | 'income' | 'investment' | 'liability')}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </button>
+                    ))}
                   </div>
-                  <input
-                    type="text"
-                    className="block w-full pl-7 py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
-                    placeholder="0.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                  />
+                  <div className="flex w-full gap-2">
+                    {['investment', 'liability'].map((type) => (
+                      <button
+                        key={type}
+                        className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors duration-200
+                          ${transactionType === type
+                            ? 'bg-purple-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}
+                        `}
+                        onClick={() => setTransactionType(type as 'expense' | 'income' | 'investment' | 'liability')}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              
-              {/* Category selection */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Category</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {/* Display categories based on transaction type */}
-                  {categoryOptions[transactionType].map((cat) => (
-                    <div
-                      key={cat.id}
-                      className={`flex flex-col items-center justify-center p-2 rounded-lg cursor-pointer transform transition-all duration-200 hover:scale-[1.05] ${
-                        category === cat.name
-                          ? 'bg-purple-100 dark:bg-purple-900 text-purple-500'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
-                      }`}
-                      onClick={() => setCategory(cat.name)}
-                    >
-                      <i className={`fa-solid ${cat.icon} text-xl mb-1`}></i>
-                      <span className="text-xs whitespace-nowrap overflow-hidden text-ellipsis w-full text-center">
-                        {cat.name}
-                      </span>
+              <div className="space-y-4">
+                {/* Amount input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <span className="text-gray-500 dark:text-gray-400">₹</span>
                     </div>
-                  ))}
+                    <input
+                      type="text"
+                      className="block w-full pl-7 py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                      placeholder="0.00"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                    />
+                  </div>
+                </div>
+                
+                {/* Category selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Category</label>
+                  {/* Responsive grid: 4 columns on mobile, 4 on larger screens for consistent alignment */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {categoryOptions[transactionType].map((cat) => (
+                      <div
+                        key={cat.id}
+                        className={`flex flex-col items-center justify-center p-2 rounded-lg cursor-pointer transform transition-all duration-200 hover:scale-[1.05] ${
+                          category === cat.name
+                            ? 'bg-purple-100 dark:bg-purple-700 text-purple-600 dark:text-purple-200'
+                            : 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200'
+                        }`}
+                        onClick={() => setCategory(cat.name)}
+                      >
+                        <i className={`fa-solid ${cat.icon} text-xl mb-1`}></i>
+                        <span className="text-xs whitespace-nowrap overflow-hidden text-ellipsis w-full text-center">
+                          {cat.name}
+                        </span>
+                      </div>
+                    ))}
+                    {/* If the number of categories is not a multiple of 4, add empty divs for alignment */}
+                    {Array.from({ length: (4 - (categoryOptions[transactionType].length % 4)) % 4 }).map((_, idx) => (
+                      <div key={`empty-${idx}`} className="invisible" />
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Date and Time input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date & Time</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                      value={date.split('T')[0]}
+                      onChange={(e) => {
+                        const currentTime = date.split('T')[1] || '00:00';
+                        setDate(`${e.target.value}T${currentTime}`);
+                      }}
+                    />
+                    <input
+                      type="time"
+                      className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                      value={date.split('T')[1] || '00:00'}
+                      onChange={(e) => {
+                        const currentDate = date.split('T')[0];
+                        setDate(`${currentDate}T${e.target.value}`);
+                      }}
+                    />
+                  </div>
+                </div>
+                
+                {/* Note input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Note (Optional)</label>
+                  <textarea
+                    className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                    rows={2}
+                    placeholder="Add a note..."
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                  ></textarea>
                 </div>
               </div>
               
-              {/* Date and Time input */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date & Time</label>
-                <div className="flex gap-2">
-                  <input
-                    type="date"
-                    className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
-                    value={date.split('T')[0]}
-                    onChange={(e) => {
-                      const currentTime = date.split('T')[1] || '00:00';
-                      setDate(`${e.target.value}T${currentTime}`);
-                    }}
-                  />
-                  <input
-                    type="time"
-                    className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
-                    value={date.split('T')[1] || '00:00'}
-                    onChange={(e) => {
-                      const currentDate = date.split('T')[0];
-                      setDate(`${currentDate}T${e.target.value}`);
-                    }}
-                  />
-                </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  className="flex-1 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium rounded-lg transition duration-300"
+                  onClick={() => setShowAddModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="flex-1 py-3 bg-purple-500 hover:bg-purple-600 text-white font-medium rounded-lg transition duration-300"
+                  onClick={handleAddTransaction}
+                >
+                  Save
+                </button>
               </div>
-              
-              {/* Note input */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Note (Optional)</label>
-                <textarea
-                  className="block w-full py-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
-                  rows={2}
-                  placeholder="Add a note..."
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                ></textarea>
-              </div>
-            </div>
-            
-            <div className="flex gap-3 mt-6">
-              <button
-                className="flex-1 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium rounded-lg transition duration-300"
-                onClick={() => setShowAddModal(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="flex-1 py-3 bg-purple-500 hover:bg-purple-600 text-white font-medium rounded-lg transition duration-300"
-                onClick={handleAddTransaction}
-              >
-                Save
-              </button>
-            </div>
-          </motion.div>
-        </div>
+            </motion.div>
+          </div>
+        </>
       )}
       
       {/* Budget Limit Modal */}
@@ -857,6 +892,85 @@ const Home: React.FC = () => {
           </motion.div>
         </div>
       )}
+      
+      {/* All Transactions Modal */}
+      {showAllTransactionsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 modal-overlay">
+          <motion.div
+            className="bg-white dark:bg-gray-900 rounded-xl w-11/12 max-w-md p-5 shadow-xl text-gray-900 dark:text-gray-100 max-h-[80vh] overflow-y-auto"
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-semibold text-gray-800 dark:text-white">All Transactions</h3>
+              <button
+                className="text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white focus:outline-none focus:ring-2 focus:ring-purple-400 rounded-full p-1 transition-colors duration-200"
+                onClick={() => setShowAllTransactionsModal(false)}
+                aria-label="Close"
+              >
+                <i className="fa-solid fa-times"></i>
+              </button>
+            </div>
+            <div className="space-y-3">
+              {userTransactions.length === 0 ? (
+                <div className="text-center text-gray-500 dark:text-gray-400">No transactions found.</div>
+              ) : (
+                userTransactions.map((transaction) => (
+                  <div key={transaction.id} className="group bg-white dark:bg-gray-800 rounded-lg shadow-sm p-3 flex items-center justify-between transform transition-all duration-300 hover:scale-[1.02] hover:shadow-md">
+                    <div className="flex items-center">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
+                        transaction.type === 'income' ? 'bg-purple-100 dark:bg-purple-900' :
+                        transaction.type === 'expense' ? 'bg-red-100 dark:bg-red-900' :
+                        transaction.type === 'investment' ? 'bg-blue-100 dark:bg-blue-900' :
+                        'bg-yellow-100 dark:bg-yellow-900'
+                      }`}>
+                        <i className={`${getCategoryIcon(transaction.category, transaction.type)} ${
+                          transaction.type === 'income' ? 'text-purple-500' :
+                          transaction.type === 'expense' ? 'text-red-500' :
+                          transaction.type === 'investment' ? 'text-blue-500' :
+                          'text-yellow-500'
+                        }`}></i>
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-800 dark:text-white">{transaction.category}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{formatDateTime(transaction.date)}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center">
+                      <div className={`font-semibold mr-3 ${
+                        transaction.type === 'income' ? 'text-purple-500' :
+                        transaction.type === 'expense' ? 'text-red-500' :
+                        transaction.type === 'investment' ? 'text-blue-500' :
+                        'text-yellow-500'
+                      }`}>
+                        {transaction.type === 'income' || transaction.type === 'investment' ? '+' : '-'}{formatCurrency(transaction.amount)}
+                      </div>
+                      <button
+                        className="focus:outline-none p-0 bg-transparent shadow-none border-none"
+                        tabIndex={0}
+                        aria-label="Delete transaction"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (currentUser) {
+                            try {
+                              await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', transaction.id));
+                            } catch (error) {
+                              console.error('Error deleting transaction:', error);
+                            }
+                          }
+                        }}
+                      >
+                        <i className="fa-solid fa-trash-alt text-lg text-red-400 hover:text-red-500 focus:text-red-600 transition-colors duration-200"></i>
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
   
@@ -890,6 +1004,9 @@ const Home: React.FC = () => {
         setDate(`${now.toISOString().split('T')[0]}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
         setNote('');
         setShowAddModal(false);
+        
+        // Send push notification for transaction addition
+        sendPushNotification('Transaction Added', `A new ${transactionType} of ${formatCurrency(parseFloat(amount))} has been added.`);
       }
     } catch (error) {
       console.error('Error adding transaction:', error);
@@ -926,17 +1043,18 @@ const Home: React.FC = () => {
       // Add to Firestore
       if (currentUser) {
         await addDoc(collection(db, 'users', currentUser.uid, 'budgetLimits'), budgetLimit);
-        
-        // Reset form and close modal
         setLimitCategory('');
         setLimitAmount('');
         setNotificationThreshold(80);
         setShowBudgetModal(false);
+        
+        // Send push notification for budget limit addition
+        sendPushNotification('Budget Limit Added', `A new budget limit of ${formatCurrency(limitValue)} has been set for ${limitCategory}.`);
       }
     } catch (error) {
       console.error('Error adding budget limit:', error);
     }
   }
-}
+};
 
 export default Home;

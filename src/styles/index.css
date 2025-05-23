@@ -48,6 +48,9 @@
   @apply transition-colors duration-200;
 }
 
+/* Remove default CSS rules that affect the page UI */
+
+/*
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -103,6 +106,7 @@ button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
+*/
 
 /* PWA specific styles */
 html, body {

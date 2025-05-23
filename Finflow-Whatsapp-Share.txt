@@ -1,0 +1,16 @@
+Finflow: Track Your Finances Easily!
+
+Hey! Check out Finflow, a simple app to track your income, expenses, and savings. It works on your phone and you can even install it like an app!
+
+Try it here: https://fin-flowai.vercel.app/
+
+- Free to use
+- Works offline
+- Super easy to use
+
+How to install Finflow as an app (PWA):
+- On Android (Chrome): Open the link, tap the three-dot menu, select "Add to Home screen," then tap "Add."
+- On iPhone (Safari): Open the link, tap the Share icon, select "Add to Home Screen," then tap "Add."
+- On Desktop: Open the link, look for the install icon in the address bar or browser menu, and click "Install."
+
+Give it a try and share your feedback!
