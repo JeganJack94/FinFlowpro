@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFinance } from '../contexts/FinanceContext';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, onSnapshot, deleteDoc, doc, orderBy, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, deleteDoc, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import GoalModal from '../components/GoalModal';
 import ProgressUpdateModal from '../components/ProgressUpdateModal';
+import { format } from 'date-fns';
 
 interface Goal {
   id: string;
@@ -18,6 +19,16 @@ interface Goal {
   createdAt: import('firebase/firestore').Timestamp | null;
 }
 
+type Reminder = {
+  id: string;
+  title: string;
+  date: string;
+  type?: 'once' | 'monthly';
+  time?: string;
+  goalId?: string;
+  createdAt?: string;
+};
+
 const Goals: React.FC = () => {
   const { formatCurrency } = useFinance();
   const { currentUser } = useAuth();
@@ -29,35 +40,63 @@ const Goals: React.FC = () => {
   const [showProgressModal, setShowProgressModal] = useState<boolean>(false);
   const [progressGoal, setProgressGoal] = useState<Goal | null>(null);
 
-  // Fetch goals from Firestore
+  // --- Reminders state and handlers ---
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderTitle, setReminderTitle] = useState('');
+  const [reminderDate, setReminderDate] = useState('');
+  const [reminderTime, setReminderTime] = useState('');
+  const [reminderType, setReminderType] = useState<'once' | 'monthly'>('once');
+  const [reminderGoalId, setReminderGoalId] = useState<string>('');
+
+  // --- Toast state ---
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  function showToast(message: string, type: 'success' | 'error' = 'success') {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 2500);
+  }
+
+  // Fetch reminders for all goals
+  useEffect(() => {
+    if (!currentUser || !goals.length) {
+      setReminders([]);
+      return;
+    }
+    // Listen to reminders for all goals
+    const unsubscribes: (() => void)[] = [];
+    let allReminders: Reminder[] = [];
+    goals.forEach(goal => {
+      const remindersQuery = collection(db, `users/${currentUser.uid}/goals/${goal.id}/reminders`);
+      const unsubscribe = onSnapshot(remindersQuery, (snapshot) => {
+        const remindersData: Reminder[] = [];
+        snapshot.forEach(doc => {
+          remindersData.push({ id: doc.id, ...doc.data(), goalId: goal.id } as Reminder);
+        });
+        // Replace reminders for this goal
+        allReminders = allReminders.filter(r => r.goalId !== goal.id).concat(remindersData);
+        // Sort by date desc
+        allReminders.sort((a, b) => (b.date + (b.time || '')) < (a.date + (a.time || '')) ? -1 : 1);
+        setReminders([...allReminders]);
+      });
+      unsubscribes.push(unsubscribe);
+    });
+    return () => { unsubscribes.forEach(u => u()); };
+  }, [currentUser, goals]);
+
   useEffect(() => {
     if (!currentUser) {
       setGoals([]);
       setIsLoading(false);
       return;
     }
-
     setIsLoading(true);
-    const goalsQuery = query(
-      collection(db, `users/${currentUser.uid}/goals`),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(goalsQuery, (snapshot) => {
-      const goalsData: Goal[] = [];
-      snapshot.forEach((doc) => {
-        goalsData.push({
-          id: doc.id,
-          ...doc.data() as Omit<Goal, 'id'>
-        });
-      });
+    const goalsRef = collection(db, `users/${currentUser.uid}/goals`);
+    const unsubscribe = onSnapshot(goalsRef, (snapshot) => {
+      const goalsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Goal));
       setGoals(goalsData);
       setIsLoading(false);
-    }, (error) => {
-      console.error("Error fetching goals:", error);
-      setIsLoading(false);
     });
-
     return () => unsubscribe();
   }, [currentUser]);
 
@@ -110,6 +149,58 @@ const Goals: React.FC = () => {
     }
   };
 
+  // Helper: Register reminder with service worker for push notification
+  function registerReminderNotification(reminder: Reminder) {
+    if ('serviceWorker' in navigator && 'showNotification' in ServiceWorkerRegistration.prototype) {
+      navigator.serviceWorker.ready.then((registration) => {
+        // Send a message to the service worker to schedule the notification
+        registration.active?.postMessage({
+          type: 'schedule-reminder',
+          reminder,
+        });
+      });
+    }
+  }
+
+  const handleAddReminder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reminderTitle || !reminderDate || !reminderGoalId) return;
+    if (!currentUser) return;
+    try {
+      const reminder = {
+        title: reminderTitle,
+        date: reminderDate,
+        time: reminderTime,
+        type: reminderType,
+        createdAt: new Date().toISOString(),
+      };
+      const docRef = await addDoc(collection(db, `users/${currentUser.uid}/goals/${reminderGoalId}/reminders`), reminder);
+      // Register for push notification
+      registerReminderNotification({ ...reminder, id: docRef.id, goalId: reminderGoalId });
+      setReminderTitle('');
+      setReminderDate('');
+      setReminderTime('');
+      setReminderType('once');
+      setReminderGoalId('');
+      setShowReminderModal(false);
+      showToast('Reminder added!', 'success');
+    } catch (err) {
+      console.error('Error adding reminder:', err);
+      showToast('Failed to add reminder', 'error');
+    }
+  }
+
+  // Format reminder date and time for display
+  function formatReminderDate(date: string, time?: string) {
+    if (!date) return '';
+    try {
+      const dateObj = new Date(date + (time ? `T${time}` : ''));
+      return format(dateObj, 'MMM dd, yyyy hh:mm a');
+    } catch {
+      return date + (time ? ` ${time}` : '');
+    }
+  }
+
   // Calculate days remaining and progress percentage
   const calculateDaysRemaining = (deadline: string) => {
     const today = new Date();
@@ -139,6 +230,99 @@ const Goals: React.FC = () => {
     
     return iconMap[category] || 'fa-solid fa-bullseye';
   };
+
+  // --- Notification helpers (copy from Notifications.tsx or Home.tsx) ---
+  interface LocalNotification {
+    id: string;
+    title: string;
+    message: string;
+    category?: string;
+    timestamp: number;
+    read: boolean;
+  }
+  const LOCAL_NOTIFICATIONS_KEY = 'finflow_local_notifications';
+  function getLocalNotifications(): LocalNotification[] {
+    try {
+      const data = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+  function saveLocalNotifications(notifications: LocalNotification[]) {
+    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(notifications));
+  }
+  function sendLocalNotification(notification: LocalNotification) {
+    const notifications = getLocalNotifications();
+    if (notifications.some((n: LocalNotification) => n.id === notification.id || n.message === notification.message)) return;
+    notifications.unshift(notification);
+    saveLocalNotifications(notifications);
+  }
+  function sendPushNotification({ title, message }: { title: string; message: string }) {
+    // Use favicon for push notification icon
+    if (window.Notification && Notification.permission === 'granted') {
+      new Notification(title, { body: message, icon: '/favicon-96x96.png' });
+    }
+  }
+  // --- End notification helpers ---
+
+  // Helper: Send local and push notifications for goal progress
+  function sendGoalProgressNotification(goal: Goal, percent: number) {
+    const motivationalMessages = [
+      'Great start! Keep going!',
+      'Awesome! You are making progress!',
+      'You are on track. Stay focused!',
+      'Halfway there! Keep pushing!',
+      'Amazing! Almost at your goal!',
+      'Congratulations! You achieved your goal!'
+    ];
+    let message = '';
+    if (percent === 100) {
+      message = `You reached your goal "${goal.name}"! ${motivationalMessages[5]}`;
+    } else {
+      const idx = Math.min(Math.floor(percent / 20), motivationalMessages.length - 2);
+      message = `You reached ${percent}% of your goal "${goal.name}". ${motivationalMessages[idx]}`;
+    }
+    // Local notification
+    const notificationId = `goal-${goal.id}-${percent}`;
+    const notification: LocalNotification = {
+      id: notificationId,
+      title: percent === 100 ? 'Goal Achieved!' : 'Goal Progress',
+      message,
+      category: goal.category,
+      timestamp: Date.now(),
+      read: false
+    };
+    sendLocalNotification(notification);
+    sendPushNotification({ title: notification.title, message });
+  }
+
+  // Effect: Watch for goal progress milestones
+  useEffect(() => {
+    if (!goals.length) return;
+    goals.forEach(goal => {
+      if (!goal.target || goal.target === 0) return;
+      const percent = Math.floor((goal.current / goal.target) * 100);
+      // Only fire for 10%, 20%, ..., 100%
+      for (let milestone = 10; milestone <= 100; milestone += 10) {
+        if (percent >= milestone) {
+          sendGoalProgressNotification(goal, milestone);
+        }
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goals]);
+
+  // Register sw-enhancement.js if not already registered
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration('/sw-enhancement.js').then((reg) => {
+        if (!reg) {
+          navigator.serviceWorker.register('/sw-enhancement.js');
+        }
+      });
+    }
+  }, []);
 
   return (
     <div className="flex flex-col gap-4 pb-20">
@@ -266,7 +450,58 @@ const Goals: React.FC = () => {
           </div>
         )}
       </div>
-
+        {/* Recent Reminders Section */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 mt-2">
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Recent Reminders</h2>
+          <button
+            className="bg-purple-500 hover:bg-purple-600 text-white p-2 rounded-full flex items-center justify-center w-9 h-9"
+            aria-label="Add Reminder"
+            onClick={() => setShowReminderModal(true)}
+          >
+            <i className="fa-solid fa-plus"></i>
+          </button>
+        </div>
+        {/* Placeholder for reminders list */}
+        {reminders.length === 0 ? (
+          <div className="text-center text-gray-500 dark:text-gray-400 py-4">
+            <i className="fa-regular fa-bell text-2xl mb-2"></i>
+            <p>No reminders yet. Add one for upcoming payments!</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+            {reminders.slice(0, 4).map((reminder) => (
+              <li key={reminder.id} className="py-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <i className="fa-regular fa-bell text-purple-500 text-xl"></i>
+                  <div>
+                    <div className="font-medium text-gray-800 dark:text-white text-sm">{reminder.title}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{formatReminderDate(reminder.date, reminder.time)}</div>
+                  </div>
+                </div>
+                <button
+                  className="ml-2 text-red-500 hover:text-red-700 bg-transparent p-1 rounded"
+                  title="Delete Reminder"
+                  aria-label="Delete Reminder"
+                  onClick={async () => {
+                    if (!currentUser || !reminder.goalId) return;
+                    try {
+                      await deleteDoc(doc(db, `users/${currentUser.uid}/goals/${reminder.goalId}/reminders`, reminder.id));
+                      showToast('Reminder deleted!', 'success');
+                    } catch (err) {
+                      console.error('Error deleting reminder:', err);
+                      showToast('Failed to delete reminder', 'error');
+                    }
+                  }}
+                >
+                  <i className="fa-solid fa-trash"></i>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {/* Goal Suggestions Section */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4">
         <h2 className="text-lg font-semibold mb-3 text-gray-800 dark:text-white">Goal Suggestions</h2>
         <div className="space-y-3">
@@ -295,6 +530,135 @@ const Goals: React.FC = () => {
           ))}
         </div>
       </div>
+
+      
+
+      {/* Add Reminder Modal */}
+      {showReminderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl p-5 w-full max-w-xs">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-white flex items-center gap-2">
+                <img src="/favicon-96x96.png" alt="Reminder" className="w-6 h-6 rounded" />
+                Add Reminder
+              </h3>
+              <button
+                className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 bg-transparent"
+                onClick={() => setShowReminderModal(false)}
+                aria-label="Close"
+              >
+                <i className="fa-solid fa-times"></i>
+              </button>
+            </div>
+            <form onSubmit={handleAddReminder} className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Title</label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 border-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
+                  value={reminderTitle}
+                  onChange={e => setReminderTitle(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
+                  <input
+                    type="date"
+                    className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 border-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
+                    value={reminderDate}
+                    onChange={e => setReminderDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Time</label>
+                  <input
+                    type="time"
+                    className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 border-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
+                    value={reminderTime}
+                    onChange={e => setReminderTime(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Repeat</label>
+                <select
+                  className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 border-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
+                  value={reminderType}
+                  onChange={e => setReminderType(e.target.value as 'once' | 'monthly')}
+                >
+                  <option value="once">One Time</option>
+                  <option value="monthly">Every Month</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Goal</label>
+                <select
+                  className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 border-none focus:ring-2 focus:ring-purple-500 text-gray-900 dark:text-white"
+                  value={reminderGoalId}
+                  onChange={e => setReminderGoalId(e.target.value)}
+                  required
+                >
+                  <option value="">Select Goal</option>
+                  {goals.map(goal => (
+                    <option key={goal.id} value={goal.id}>{goal.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button
+                  type="button"
+                  className="flex-1 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg"
+                  onClick={() => setShowReminderModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg"
+                >
+                  Add
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Toast notification (top, modern UI, full width, visible text, app theme gradient, enhanced animation) */}
+      {toast && (
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[95vw] max-w-sm px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-white text-sm font-medium transition-all duration-300 animate-toast-slide-in-theme
+          ${toast.type === 'success' ? 'bg-gradient-to-r from-purple-500 via-purple-400 to-green-500' : 'bg-gradient-to-r from-red-500 via-pink-500 to-orange-500'}
+        `} role="alert">
+          <span>
+            {toast.type === 'success' ? (
+              <i className="fa-solid fa-circle-check text-lg mr-1"></i>
+            ) : (
+              <i className="fa-solid fa-circle-exclamation text-lg mr-1"></i>
+            )}
+          </span>
+          <span className="flex-1 whitespace-normal break-words">{toast.message}</span>
+          <button
+            className="ml-2 text-white/80 hover:text-white bg-transparent p-1 rounded-full focus:outline-none"
+            onClick={() => setToast(null)}
+            aria-label="Close notification"
+            tabIndex={0}
+          >
+            <i className="fa-solid fa-xmark"></i>
+          </button>
+          <style>{`
+            @keyframes toast-slide-in-theme {
+              from { opacity: 0; transform: translateY(-30px) scale(0.98) translateX(-50%); }
+              to { opacity: 1; transform: translateY(0) scale(1) translateX(-50%); }
+            }
+            .animate-toast-slide-in-theme {
+              animation: toast-slide-in-theme 0.5s cubic-bezier(.4,0,.2,1);
+            }
+          `}</style>
+        </div>
+      )}
     </div>
   );
 };

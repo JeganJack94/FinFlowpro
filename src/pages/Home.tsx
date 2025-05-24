@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, updateDoc, where, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import PWAPrompt from '../components/PWAPrompt';
+import Notifications from './Notifications';
 import type { Timestamp } from 'firebase/firestore';
 
 // Helper function to format date and time
@@ -226,6 +227,19 @@ const Home: React.FC = () => {
   // All transactions modal state
   const [showAllTransactionsModal, setShowAllTransactionsModal] = useState(false);
   
+  // Notification modal state
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [localNotifications, setLocalNotifications] = useState<LocalNotification[]>(() => getLocalNotifications());
+  
+  // Toast notification state
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  
+  // Show toast notification
+  function showToast(message: string, type: 'success' | 'error' = 'success') {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 2500);
+  }
+
   // Category options for each transaction type - memoized to prevent re-creation on each render
   const categoryOptions = useMemo(() => ({
     income: [
@@ -318,8 +332,10 @@ const Home: React.FC = () => {
           if (currentUser) {
             try {
               await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', id));
+              showToast('Transaction deleted successfully!', 'success');
             } catch (error) {
               console.error('Error deleting transaction:', error);
+              showToast('Error deleting transaction. Please try again.', 'error');
             }
           }
         }}
@@ -462,9 +478,77 @@ const Home: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser, userTransactions, updateBudgetLimitsWithExpenses]);
   
-  // Notification fetch logic removed to prevent frequent re-renders
+  // Notification type
+  interface LocalNotification {
+    id: string;
+    title: string;
+    message: string;
+    category?: string;
+    timestamp: number;
+    read: boolean;
+  }
 
-  // Budget notification logic removed to prevent frequent re-renders
+  // Local notification helpers
+  const LOCAL_NOTIFICATIONS_KEY = 'finflow_local_notifications';
+
+  function getLocalNotifications(): LocalNotification[] {
+    try {
+      const data = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveLocalNotifications(notifications: LocalNotification[]) {
+    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(notifications));
+  }
+
+  function sendLocalNotification(notification: LocalNotification) {
+    const notifications = getLocalNotifications();
+    if (notifications.some((n: LocalNotification) => n.id === notification.id || n.message === notification.message)) return;
+    notifications.unshift(notification);
+    saveLocalNotifications(notifications);
+  }
+
+  function sendPushNotification({ title, message }: { title: string; message: string }) {
+    if (window.Notification && Notification.permission === 'granted') {
+      new Notification(title, { body: message, icon: '/favicon-96x96.png' });
+    }
+  }
+
+  // Listen for local notification changes (for modal)
+  useEffect(() => {
+    function handleStorage() {
+      setLocalNotifications(getLocalNotifications());
+    }
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  // Show notification modal when bell icon is clicked
+  const openNotifications = () => setShowNotifications(true);
+  const closeNotifications = () => setShowNotifications(false);
+
+  // Budget limit notification effect
+  useEffect(() => {
+    budgetLimits.forEach((limit) => {
+      if (limit.limit > 0 && limit.spent / limit.limit >= limit.notificationThreshold / 100) {
+        const notificationId = `budget-${limit.id}`;
+        const message = `You have reached ${limit.notificationThreshold}% of your budget for ${limit.category}.`;
+        sendLocalNotification({
+          id: notificationId,
+          title: 'Budget Limit Alert',
+          message,
+          category: limit.category,
+          timestamp: Date.now(),
+          read: false,
+        });
+        sendPushNotification({ title: 'Budget Limit Alert', message });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [budgetLimits]);
 
   // This state and effect prevents the flash/blinking during initial render
   const [isMounted, setIsMounted] = useState(false);
@@ -500,6 +584,17 @@ const Home: React.FC = () => {
             <h1 className="text-xl font-bold text-gray-800 dark:text-white">FinFlow</h1>
           </div>
           <div className="flex items-center space-x-4">
+            {/* Bell Icon for Notifications */}
+            <button
+              className="relative focus:outline-none bg-transparent hover:bg-transparent active:bg-transparent shadow-none border-none"
+              aria-label="Show notifications"
+              onClick={openNotifications}
+            >
+              <i className="fa-solid fa-bell text-xl text-purple-500 hover:text-purple-700 transition-colors"></i>
+              {localNotifications.some((n: LocalNotification) => !n.read) && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white dark:border-gray-900"></span>
+              )}
+            </button>
             {/* Dark/Light Mode Toggle */}
             <div className="relative">
               <motion.button
@@ -722,8 +817,10 @@ const Home: React.FC = () => {
                     try {
                       // Delete budget limit from Firestore
                       await deleteDoc(doc(db, 'users', currentUser.uid, 'budgetLimits', id));
+                      showToast('Budget limit deleted successfully!', 'success');
                     } catch (error) {
                       console.error('Error deleting budget limit:', error);
+                      showToast('Error deleting budget limit. Please try again.', 'error');
                     }
                   }
                 }}
@@ -1060,8 +1157,10 @@ const Home: React.FC = () => {
                       if (currentUser) {
                         try {
                           await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', id));
+                          showToast('Transaction deleted successfully!', 'success');
                         } catch (error) {
                           console.error('Error deleting transaction:', error);
+                          showToast('Error deleting transaction. Please try again.', 'error');
                         }
                       }
                     }}
@@ -1070,6 +1169,48 @@ const Home: React.FC = () => {
               )}
             </div>
           </motion.div>
+        </div>
+      )}
+      
+      {/* Notifications Modal (internal notifications) */}
+      {showNotifications && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 backdrop-blur-sm">
+          <div className="w-full max-w-md mx-auto">
+            <Notifications onClose={closeNotifications} />
+          </div>
+        </div>
+      )}
+      
+      {/* Toast notification (top, modern UI, full width, visible text, app theme gradient, enhanced animation) */}
+      {toast && (
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[95vw] max-w-sm px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-white text-sm font-medium transition-all duration-300 animate-toast-slide-in-theme
+          ${toast.type === 'success' ? 'bg-gradient-to-r from-purple-500 via-purple-400 to-green-500' : 'bg-gradient-to-r from-red-500 via-pink-500 to-orange-500'}
+        `} role="alert">
+          <span>
+            {toast.type === 'success' ? (
+              <i className="fa-solid fa-circle-check text-lg mr-1"></i>
+            ) : (
+              <i className="fa-solid fa-circle-exclamation text-lg mr-1"></i>
+            )}
+          </span>
+          <span className="flex-1 whitespace-normal break-words">{toast.message}</span>
+          <button
+            className="ml-2 text-white/80 hover:text-white bg-transparent p-1 rounded-full focus:outline-none"
+            onClick={() => setToast(null)}
+            aria-label="Close notification"
+            tabIndex={0}
+          >
+            <i className="fa-solid fa-xmark"></i>
+          </button>
+          <style>{`
+            @keyframes toast-slide-in-theme {
+              from { opacity: 0; transform: translateY(-30px) scale(0.98) translateX(-50%); }
+              to { opacity: 1; transform: translateY(0) scale(1) translateX(-50%); }
+            }
+            .animate-toast-slide-in-theme {
+              animation: toast-slide-in-theme 0.5s cubic-bezier(.4,0,.2,1);
+            }
+          `}</style>
         </div>
       )}
     </div>
@@ -1149,9 +1290,11 @@ const Home: React.FC = () => {
         setDate(`${now.toISOString().split('T')[0]}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
         setNote('');
         setShowAddModal(false);
+        showToast('Transaction added successfully!', 'success');
       }
     } catch (error) {
       console.error('Error adding transaction:', error);
+      showToast('Error adding transaction. Please try again.', 'error');
     }
   }
   
@@ -1188,9 +1331,11 @@ const Home: React.FC = () => {
         setLimitAmount('');
         setNotificationThreshold(80);
         setShowBudgetModal(false);
+        showToast('Budget limit added successfully!', 'success');
       }
     } catch (error) {
       console.error('Error adding budget limit:', error);
+      showToast('Error adding budget limit. Please try again.', 'error');
     }
   }
 };

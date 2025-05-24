@@ -29,6 +29,13 @@ const Profile: React.FC = () => {
   // State for user manual modal
   const [showUserManualModal, setShowUserManualModal] = useState(false);
 
+  // --- Toast state ---
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  function showToast(message: string, type: 'success' | 'error' = 'success') {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 2500);
+  }
+
   // Update display name when currentUser changes
   useEffect(() => {
     if (currentUser?.displayName) {
@@ -44,36 +51,37 @@ const Profile: React.FC = () => {
     const newState = !notificationsEnabled;
     setNotificationsEnabled(newState);
     localStorage.setItem('notifications', newState.toString());
-    
     if (newState && "Notification" in window) {
-      // Request permission for browser notifications if enabling
       Notification.requestPermission();
     } else if (!newState && currentUser) {
       try {
-        // If disabling notifications, clear all unread notifications
+        // Mark all unread notifications as read in Firestore
         const notificationsRef = collection(db, 'users', currentUser.uid, 'notifications');
         const notificationsQuery = query(notificationsRef, where('read', '==', false));
         const querySnapshot = await getDocs(notificationsQuery);
-        
         const batch = writeBatch(db);
         querySnapshot.forEach((doc) => {
-          // Mark all as read instead of deleting to preserve history
           batch.update(doc.ref, { read: true });
         });
-        
-        // Also reset notification status for all budget limits
+        // Reset notification status for all budget limits
         const budgetLimitsRef = collection(db, 'users', currentUser.uid, 'budgetLimits');
         const budgetLimitsQuery = query(budgetLimitsRef);
         const budgetSnapshot = await getDocs(budgetLimitsQuery);
-        
         budgetSnapshot.forEach((doc) => {
-          // Reset notification sent flag
           batch.update(doc.ref, { notificationSent: false });
         });
-        
         await batch.commit();
+        // Also clear all local notifications and cancel scheduled reminders
+        localStorage.removeItem('finflow_local_notifications');
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then((registration) => {
+            registration.active?.postMessage({ type: 'cancel-all-reminders' });
+          });
+        }
+        showToast('Notifications disabled and cleared.', 'success');
       } catch (error) {
         console.error("Error clearing notifications:", error);
+        showToast('Failed to clear notifications.', 'error');
       }
     }
   };
@@ -110,6 +118,7 @@ const Profile: React.FC = () => {
       }
       
       setSecuritySuccess('Profile updated successfully!');
+      showToast('Profile updated successfully!', 'success');
       setTimeout(() => {
         setShowSecurityModal(false);
         setSecuritySuccess('');
@@ -117,6 +126,7 @@ const Profile: React.FC = () => {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to update profile';
       setSecurityError(errorMessage);
+      showToast(errorMessage, 'error');
     }
   };
 
@@ -404,6 +414,39 @@ const Profile: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast notification (top, modern UI, full width, visible text, app theme gradient, enhanced animation) */}
+      {toast && (
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[95vw] max-w-sm px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-white text-sm font-medium transition-all duration-300 animate-toast-slide-in-theme
+          ${toast.type === 'success' ? 'bg-gradient-to-r from-purple-500 via-purple-400 to-green-500' : 'bg-gradient-to-r from-red-500 via-pink-500 to-orange-500'}
+        `} role="alert">
+          <span>
+            {toast.type === 'success' ? (
+              <i className="fa-solid fa-circle-check text-lg mr-1"></i>
+            ) : (
+              <i className="fa-solid fa-circle-exclamation text-lg mr-1"></i>
+            )}
+          </span>
+          <span className="flex-1 whitespace-normal break-words">{toast.message}</span>
+          <button
+            className="ml-2 text-white/80 hover:text-white bg-transparent p-1 rounded-full focus:outline-none"
+            onClick={() => setToast(null)}
+            aria-label="Close notification"
+            tabIndex={0}
+          >
+            <i className="fa-solid fa-xmark"></i>
+          </button>
+          <style>{`
+            @keyframes toast-slide-in-theme {
+              from { opacity: 0; transform: translateY(-30px) scale(0.98) translateX(-50%); }
+              to { opacity: 1; transform: translateY(0) scale(1) translateX(-50%); }
+            }
+            .animate-toast-slide-in-theme {
+              animation: toast-slide-in-theme 0.5s cubic-bezier(.4,0,.2,1);
+            }
+          `}</style>
         </div>
       )}
 
