@@ -7,7 +7,6 @@ import Home from "./pages/Home";
 import Analytics from "./pages/Analytics";
 import Goals from "./pages/Goals";
 import Profile from "./pages/Profile";
-import Notifications from "./pages/Notifications";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { FinanceProvider } from "./contexts/FinanceContext";
 import { NotificationProvider } from "./components/NotificationProvider";
@@ -79,11 +78,6 @@ function AppRoutes() {
         <Route path="/profile" element={
           <ProtectedRoute>
             <Profile />
-          </ProtectedRoute>
-        } />
-        <Route path="/notifications" element={
-          <ProtectedRoute>
-            <Notifications />
           </ProtectedRoute>
         } />
         

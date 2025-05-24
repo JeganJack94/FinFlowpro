@@ -14,7 +14,7 @@ const Navigation: React.FC = () => {
   // Active state is handled directly in each Link component
 
   return (
-    <nav className="bg-white dark:bg-gray-900 shadow-lg py-3 px-4 fixed bottom-0 left-0 right-0 z-10 border-t border-gray-100 dark:border-gray-800">
+    <nav className="bg-white dark:bg-gray-900 py-3 px-4 fixed bottom-0 left-0 right-0 z-10 border-t border-gray-100 dark:border-gray-800 shadow-[0_-4px_15px_-1px_rgba(139,92,246,0.5)] dark:shadow-[0_-4px_15px_-1px_rgba(139,92,246,0.4)]">
       <div className="flex justify-around items-center max-w-md mx-auto">
         <Link to="/home" className={`flex flex-col items-center px-3 py-1 ${location.pathname === '/home' ? 'text-purple-600 dark:text-purple-400' : 'text-gray-400 dark:text-gray-500'}`}>
           <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

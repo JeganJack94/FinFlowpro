@@ -3,10 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
+import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import PWAPrompt from '../components/PWAPrompt';
-import { useNotification } from '../components/NotificationProvider';
 import type { Timestamp } from 'firebase/firestore';
 
 // Helper function to format date and time
@@ -45,6 +44,8 @@ const TransactionItem = React.memo(({
     amount: number;
     category: string;
     date: string;
+    lendName?: string;
+    note?: string;
   };
   formatCurrency: (amount: number) => string;
   getCategoryIcon: (category: string, type: string) => string;
@@ -54,28 +55,38 @@ const TransactionItem = React.memo(({
     <div className="group bg-white dark:bg-gray-800 rounded-lg shadow-sm p-3 flex items-center justify-between transform transition-all duration-300 hover:scale-[1.02] hover:shadow-md">
       <div className="flex items-center">
         <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
-          transaction.type === 'income' ? 'bg-purple-100 dark:bg-purple-900' :
+          transaction.type === 'income' ? 'bg-green-100 dark:bg-green-900' :
           transaction.type === 'expense' ? 'bg-red-100 dark:bg-red-900' :
           transaction.type === 'investment' ? 'bg-blue-100 dark:bg-blue-900' :
+          transaction.type === 'lend' ? 'bg-purple-100 dark:bg-purple-900' :
           'bg-yellow-100 dark:bg-yellow-900'
         }`}>
           <i className={`${getCategoryIcon(transaction.category, transaction.type)} ${
-            transaction.type === 'income' ? 'text-purple-500' :
+            transaction.type === 'income' ? 'text-green-500' :
             transaction.type === 'expense' ? 'text-red-500' :
             transaction.type === 'investment' ? 'text-blue-500' :
+            transaction.type === 'lend' ? 'text-purple-500' :
             'text-yellow-500'
           }`}></i>
         </div>
         <div>
-          <div className="font-medium text-gray-800 dark:text-white">{transaction.category}</div>
+          <div className="font-medium text-gray-800 dark:text-white">
+            {transaction.category}
+            {transaction.lendName && (
+              <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
+                • {transaction.lendName}
+              </span>
+            )}
+          </div>
           <div className="text-xs text-gray-500 dark:text-gray-400">{formatDateTime(transaction.date)}</div>
         </div>
       </div>
       <div className="flex items-center">
         <div className={`font-semibold mr-3 ${
-          transaction.type === 'income' ? 'text-purple-500' :
+          transaction.type === 'income' ? 'text-green-500' :
           transaction.type === 'expense' ? 'text-red-500' :
           transaction.type === 'investment' ? 'text-blue-500' :
+          transaction.type === 'lend' ? 'text-purple-500' :
           'text-yellow-500'
         }`}>
           {transaction.type === 'income' || transaction.type === 'investment' ? '+' : '-'}{formatCurrency(transaction.amount)}
@@ -107,8 +118,6 @@ type BudgetLimit = {
   notificationThreshold: number;
   userId?: string;
   timestamp?: Timestamp | null;
-  lastNotificationDate?: string | null;
-  notificationSent?: boolean;
 };
 
 // Memoized budget limit component
@@ -167,13 +176,37 @@ const Home: React.FC = () => {
   
   const { currentUser } = useAuth();
   const navigate = useNavigate();
-  const { sendPushNotification } = useNotification();
+  
+  // Dark mode state and toggle
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const savedMode = localStorage.getItem('darkMode');
+    // Check if saved mode exists, otherwise check system preference
+    return savedMode !== null 
+      ? savedMode === 'true' 
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    // Apply dark mode to document
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    // Save preference to localStorage
+    localStorage.setItem('darkMode', String(isDarkMode));
+  }, [isDarkMode]);
+
+  const toggleDarkMode = () => {
+    setIsDarkMode(prevMode => !prevMode);
+  };
   
   // Transaction modal states
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
-  const [transactionType, setTransactionType] = useState<'expense' | 'income' | 'investment' | 'liability'>('expense');
+  const [transactionType, setTransactionType] = useState<'expense' | 'income' | 'investment' | 'liability' | 'lend'>('expense');
   const [amount, setAmount] = useState<string>('');
   const [category, setCategory] = useState<string>('');
+  const [lendName, setLendName] = useState<string>('');
   const [date, setDate] = useState<string>(() => {
     const now = new Date();
     return `${now.toISOString().split('T')[0]}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -188,9 +221,6 @@ const Home: React.FC = () => {
   
   // Budget limits state
   const [budgetLimits, setBudgetLimits] = useState<BudgetLimit[]>([]);
-  
-  // Notifications state
-  const [notifications, setNotifications] = useState<UserNotification[]>([]);
   
   // All transactions modal state
   const [showAllTransactionsModal, setShowAllTransactionsModal] = useState(false);
@@ -230,17 +260,25 @@ const Home: React.FC = () => {
       { id: 'loan', name: 'Loan', icon: 'fa-solid fa-hand-holding-usd' },
       { id: 'car-loan', name: 'Car Loan', icon: 'fa-solid fa-car' },
       { id: 'credit-card', name: 'Credit Card', icon: 'fa-solid fa-credit-card' }
+    ],
+    lend: [
+      { id: 'personal', name: 'Personal', icon: 'fa-solid fa-user' },
+      { id: 'family', name: 'Family', icon: 'fa-solid fa-users' },
+      { id: 'friend', name: 'Friend', icon: 'fa-solid fa-user-friends' },
+      { id: 'colleague', name: 'Colleague', icon: 'fa-solid fa-user-tie' },
+      { id: 'other', name: 'Other', icon: 'fa-solid fa-user-shield' }
     ]
   }), []);
   
   // User transactions state
   type Transaction = {
     id: string;
-    type: 'income' | 'expense' | 'investment' | 'liability';
+    type: 'income' | 'expense' | 'investment' | 'liability' | 'lend';
     amount: number;
     category: string;
     date: string;
     note?: string;
+    lendName?: string;
     timestamp?: Timestamp | null;
     userId?: string;
   };
@@ -257,22 +295,14 @@ const Home: React.FC = () => {
     notificationSent?: boolean;
   };
 
-  type UserNotification = {
-    id: string;
-    title: string;
-    message: string;
-    category: string;
-    type: string;
-    timestamp?: Timestamp | null;
-    read: boolean;
-    createdDate: string;
-  };
+
 
   const [userTransactions, setUserTransactions] = useState<Transaction[]>([]);
   const [totalIncome, setTotalIncome] = useState<number>(0);
   const [totalExpense, setTotalExpense] = useState<number>(0);
   const [totalInvestment, setTotalInvestment] = useState<number>(0);
   const [totalLiability, setTotalLiability] = useState<number>(0);
+  const [totalLend, setTotalLend] = useState<number>(0);
   const [totalBalance, setTotalBalance] = useState<number>(0);
   
   // Memoize recent transactions to prevent re-renders
@@ -315,6 +345,7 @@ const Home: React.FC = () => {
           category: data.category ?? '',
           date: data.date ?? '',
           note: data.note,
+          lendName: data.lendName,
           timestamp: data.timestamp,
           userId: data.userId,
         };
@@ -327,6 +358,7 @@ const Home: React.FC = () => {
       let expense = 0;
       let investment = 0;
       let liability = 0;
+      let lend = 0;
 
       // For tracking expenses by category (for budget limits)
       const expensesByCategory: Record<string, number> = {};
@@ -347,6 +379,8 @@ const Home: React.FC = () => {
           investment += amount;
         } else if (transaction.type === 'liability') {
           liability += amount;
+        } else if (transaction.type === 'lend') {
+          lend += amount;
         }
       });
 
@@ -354,7 +388,8 @@ const Home: React.FC = () => {
       setTotalExpense(expense);
       setTotalInvestment(investment);
       setTotalLiability(liability);
-      setTotalBalance(income - expense);
+      setTotalLend(lend);
+      setTotalBalance(income - expense - lend);
     });
 
     return () => unsubscribe();
@@ -374,7 +409,6 @@ const Home: React.FC = () => {
     const unsubscribe = onSnapshot(budgetLimitsQuery, (snapshot) => {
       const limits: BudgetLimit[] = snapshot.docs.map(doc => {
         const data = doc.data();
-        const notificationsEnabled = localStorage.getItem('notifications') === 'true';
         return {
           id: doc.id,
           category: data.category ?? '',
@@ -382,9 +416,7 @@ const Home: React.FC = () => {
           spent: typeof data.spent === 'number' ? data.spent : 0,
           notificationThreshold: typeof data.notificationThreshold === 'number' ? data.notificationThreshold : 80,
           userId: data.userId,
-          timestamp: data.timestamp,
-          lastNotificationDate: data.lastNotificationDate ?? null,
-          notificationSent: notificationsEnabled ? (data.notificationSent || false) : true
+          timestamp: data.timestamp
         };
       });
       setBudgetLimits(limits);
@@ -393,98 +425,9 @@ const Home: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser]);
 
-  // Fetch notifications from Firestore
-  useEffect(() => {
-    if (!currentUser) return;
+  // Notification fetch logic removed to prevent frequent re-renders
 
-    // Set up real-time listener for notifications
-    const notificationsRef = collection(db, 'users', currentUser.uid, 'notifications');
-    const notificationsQuery = query(
-      notificationsRef,
-      orderBy('timestamp', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(notificationsQuery, (snapshot) => {
-      const userNotifications: UserNotification[] = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          title: data.title ?? '',
-          message: data.message ?? '',
-          category: data.category ?? '',
-          type: data.type ?? '',
-          timestamp: data.timestamp,
-          read: !!data.read,
-          createdDate: data.createdDate ?? ''
-        };
-      });
-      setNotifications(userNotifications);
-    });
-
-    return () => unsubscribe();
-  }, [currentUser]);
-
-  // Separate effect for budget notification logic
-  useEffect(() => {
-    if (!currentUser || budgetLimits.length === 0) return;
-
-    // Use function from outside the effect to prevent unnecessary recreations
-    const checkAndSendNotifications = async () => {
-      // Calculate expenses by category
-      const expensesByCategory: Record<string, number> = {};
-      userTransactions.forEach(transaction => {
-        if (transaction.type === 'expense') {
-          const category = transaction.category;
-          if (category) {
-            expensesByCategory[category] = (expensesByCategory[category] || 0) + (transaction.amount || 0);
-          }
-        }
-      });
-
-      for (const limit of budgetLimits) {
-        const spent = expensesByCategory[limit.category] || 0;
-        const notificationsEnabled = localStorage.getItem('notifications') === 'true';
-        const percentSpentValue = (spent / limit.limit) * 100;
-        const today = new Date().toISOString().split('T')[0];
-        if (
-          notificationsEnabled &&
-          percentSpentValue >= limit.notificationThreshold &&
-          (!limit.lastNotificationDate || limit.lastNotificationDate !== today)
-        ) {
-          const existingTodayNotification = notifications.find(notif =>
-            notif.category === limit.category &&
-            notif.type === 'budget-alert' &&
-            notif.createdDate === today &&
-            !notif.read
-          );
-          if (!existingTodayNotification && currentUser) {
-            try {
-              const newNotification = {
-                title: 'Budget Alert',
-                message: `You've used ${percentSpentValue.toFixed(0)}% of your ${limit.category} budget`,
-                category: limit.category,
-                type: 'budget-alert',
-                timestamp: serverTimestamp(),
-                read: false,
-                createdDate: today
-              };
-              await addDoc(collection(db, 'users', currentUser.uid, 'notifications'), newNotification);
-              const budgetRef = doc(db, 'users', currentUser.uid, 'budgetLimits', limit.id);
-              await updateDoc(budgetRef, {
-                lastNotificationDate: today
-              });
-              // Send browser push notification
-              sendPushNotification('Budget Alert', `You've used ${percentSpentValue.toFixed(0)}% of your ${limit.category} budget`);
-            } catch (error) {
-              console.error('Error in notification/budget update process:', error);
-            }
-          }
-        }
-      }
-    };
-
-    checkAndSendNotifications();
-  }, [budgetLimits, notifications, userTransactions, currentUser, sendPushNotification]);
+  // Budget notification logic removed to prevent frequent re-renders
 
   // Handle pull-to-refresh functionality for mobile devices
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -525,9 +468,67 @@ const Home: React.FC = () => {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
+      {/* Fixed Navbar */}
+      <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 p-4 backdrop-blur-md bg-opacity-80 dark:bg-opacity-80 shadow-[0_2px_10px_-2px_rgba(139,92,246,0.3)] dark:shadow-[0_2px_10px_-2px_rgba(139,92,246,0.2)]">
+        <div className="max-w-md mx-auto flex items-center justify-between">
+          <div className="flex items-center">
+            <i className="fa-solid fa-wallet text-purple-600 text-xl mr-2"></i>
+            <h1 className="text-xl font-bold text-gray-800 dark:text-white">FinFlow</h1>
+          </div>
+          <div className="flex items-center space-x-4">
+            {/* Dark/Light Mode Toggle */}
+            <div className="relative">
+              <motion.button
+                className={`w-14 h-7 rounded-full flex items-center transition-colors duration-300 focus:outline-none shadow-md ${
+                  isDarkMode ? 'bg-gray-700 justify-end' : 'bg-purple-400 justify-start'
+                }`}
+                onClick={toggleDarkMode}
+                aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                <motion.div 
+                  className={`w-5 h-5 rounded-full mx-1 flex items-center justify-center ${
+                    isDarkMode ? 'bg-purple-500 text-white' : 'bg-white text-yellow-500'
+                  }`}
+                  layout
+                  transition={{ type: 'spring', stiffness: 700, damping: 30 }}
+                >
+                  {isDarkMode ? (
+                    <i className="fa-solid fa-moon text-xs"></i>
+                  ) : (
+                    <i className="fa-solid fa-sun text-xs"></i>
+                  )}
+                </motion.div>
+              </motion.button>
+            </div>
+            {/* User Avatar */}
+            {currentUser && (
+              <div 
+                className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center cursor-pointer"
+                onClick={() => navigate('/profile')}
+              >
+                {currentUser.photoURL ? (
+                  <img 
+                    src={currentUser.photoURL} 
+                    alt="Profile" 
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="text-white text-sm font-medium">
+                    {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : 
+                     currentUser.email ? currentUser.email.charAt(0).toUpperCase() : 'U'}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
       
-      {/* PWA Install Prompt */}
-      <PWAPrompt className="mx-4 mt-2" />
+      {/* Add padding to account for fixed navbar */}
+      <div className="pt-16">
+        {/* PWA Install Prompt */}
+        <PWAPrompt className="mx-4 mt-2" />
+      </div>
       
       <div className="flex flex-col gap-4">
         <motion.div 
@@ -541,29 +542,6 @@ const Home: React.FC = () => {
           <div className="absolute top-0 right-0 w-32 h-32 bg-purple-100 dark:bg-purple-900/20 rounded-full -mr-16 -mt-16 opacity-50"></div>
           <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-100 dark:bg-purple-900/20 rounded-full -ml-12 -mb-12 opacity-50"></div>
           <div className="relative">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center">
-                <i className="fa-solid fa-wallet text-purple-600 text-xl mr-2"></i>
-                <h1 className="text-xl font-bold text-gray-800 dark:text-white">FinFlow</h1>
-              </div>
-              <div className="flex items-center space-x-2">
-                <motion.div 
-                  className="relative"
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                >
-                  <motion.i 
-                    className="fa-solid fa-bell text-gray-600 dark:text-gray-400 text-lg cursor-pointer"
-                    onClick={() => navigate('/notifications')}
-                  ></motion.i>
-                  {notifications.filter(n => !n.read).length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                      {notifications.filter(n => !n.read).length}
-                    </span>
-                  )}
-                </motion.div>
-              </div>
-            </div>
             <div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Total Balance</div>
             <motion.div 
               className="text-3xl font-bold text-gray-800 dark:text-white mb-3"
@@ -575,9 +553,9 @@ const Home: React.FC = () => {
             </motion.div>
             <div className="flex items-center justify-between">
               <div className="flex items-center">
-                <i className="fa-solid fa-arrow-down text-purple-500 mr-1"></i>
+                <i className="fa-solid fa-arrow-down text-green-500 mr-1"></i>
                 <span className="text-xs text-gray-500">Income</span>
-                <span className="text-xs font-semibold text-purple-500 ml-1">+{formatCurrency(totalIncome)}</span>
+                <span className="text-xs font-semibold text-green-500 ml-1">+{formatCurrency(totalIncome)}</span>
               </div>
               <div className="flex items-center">
                 <i className="fa-solid fa-arrow-up text-red-500 mr-1"></i>
@@ -590,7 +568,7 @@ const Home: React.FC = () => {
         
         <div className="flex space-x-3 mb-4 overflow-x-auto py-2 scrollbar-hide">
           <motion.div 
-            className="flex-shrink-0 w-32 h-24 bg-gradient-to-br from-purple-500 to-purple-700 rounded-xl shadow-md p-3 flex flex-col justify-between"
+            className="flex-shrink-0 w-32 h-24 bg-gradient-to-br from-green-500 to-green-700 rounded-xl shadow-md p-3 flex flex-col justify-between"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             initial={{ opacity: 0, x: -20 }}
@@ -599,7 +577,7 @@ const Home: React.FC = () => {
           >
             <i className="fa-solid fa-money-bill-wave text-white text-xl"></i>
             <div>
-              <div className="text-xs text-purple-100">Income</div>
+              <div className="text-xs text-green-100">Income</div>
               <div className="text-white font-semibold">{formatCurrency(totalIncome)}</div>
             </div>
           </motion.div>
@@ -646,6 +624,21 @@ const Home: React.FC = () => {
             <div>
               <div className="text-xs text-yellow-100">Liability</div>
               <div className="text-white font-semibold">{formatCurrency(totalLiability)}</div>
+            </div>
+          </motion.div>
+
+          <motion.div 
+            className="flex-shrink-0 w-32 h-24 bg-gradient-to-br from-purple-500 to-purple-700 rounded-xl shadow-md p-3 flex flex-col justify-between"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.5, duration: 0.3 }}
+          >
+            <i className="fa-solid fa-handshake text-white text-xl"></i>
+            <div>
+              <div className="text-xs text-purple-100">Lend</div>
+              <div className="text-white font-semibold">{formatCurrency(totalLend)}</div>
             </div>
           </motion.div>
         </div>
@@ -763,7 +756,7 @@ const Home: React.FC = () => {
                             ? 'bg-purple-500 text-white'
                             : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}
                         `}
-                        onClick={() => setTransactionType(type as 'expense' | 'income' | 'investment' | 'liability')}
+                        onClick={() => setTransactionType(type as 'expense' | 'income' | 'investment' | 'liability' | 'lend')}
                       >
                         {type.charAt(0).toUpperCase() + type.slice(1)}
                       </button>
@@ -778,11 +771,23 @@ const Home: React.FC = () => {
                             ? 'bg-purple-500 text-white'
                             : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}
                         `}
-                        onClick={() => setTransactionType(type as 'expense' | 'income' | 'investment' | 'liability')}
+                        onClick={() => setTransactionType(type as 'expense' | 'income' | 'investment' | 'liability' | 'lend')}
                       >
                         {type.charAt(0).toUpperCase() + type.slice(1)}
                       </button>
                     ))}
+                  </div>
+                  <div className="flex w-full gap-2">
+                    <button
+                      className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors duration-200
+                        ${transactionType === 'lend'
+                          ? 'bg-purple-500 text-white'
+                          : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}
+                      `}
+                      onClick={() => setTransactionType('lend')}
+                    >
+                      Lend
+                    </button>
                   </div>
                 </div>
               </div>
@@ -831,6 +836,20 @@ const Home: React.FC = () => {
                     ))}
                   </div>
                 </div>
+                
+                {/* Lend Name input - only show for lend transaction type */}
+                {transactionType === 'lend' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Lend To</label>
+                    <input
+                      type="text"
+                      className="block w-full py-3 px-3 border-none bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                      placeholder="Name of borrower"
+                      value={lendName}
+                      onChange={(e) => setLendName(e.target.value)}
+                    />
+                  </div>
+                )}
                 
                 {/* Date and Time input */}
                 <div>
@@ -1039,17 +1058,41 @@ const Home: React.FC = () => {
       return;
     }
     
+    // For lend transactions, require a name
+    if (transactionType === 'lend' && !lendName) {
+      alert('Please enter the borrower\'s name for lend transactions');
+      return;
+    }
+    
     try {
       // Create transaction object with date and time
-      const transaction = {
+      const transaction: {
+        type: typeof transactionType;
+        amount: number;
+        category: string;
+        date: string;
+        note?: string;
+        lendName?: string;
+        timestamp: ReturnType<typeof serverTimestamp>;
+        userId?: string;
+      } = {
         type: transactionType,
         amount: parseFloat(amount),
         category,
         date,
-        note,
         timestamp: serverTimestamp(),
         userId: currentUser?.uid
       };
+      
+      // Only add note if it's not empty
+      if (note && note.trim()) {
+        transaction.note = note;
+      }
+      
+      // Only add lendName for lend transactions
+      if (transactionType === 'lend' && lendName) {
+        transaction.lendName = lendName;
+      }
       
       // Add to Firestore
       if (currentUser) {
@@ -1058,13 +1101,11 @@ const Home: React.FC = () => {
         // Reset form and close modal
         setAmount('');
         setCategory('');
+        setLendName('');
         const now = new Date();
         setDate(`${now.toISOString().split('T')[0]}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
         setNote('');
         setShowAddModal(false);
-        
-        // Send push notification for transaction addition
-        sendPushNotification('Transaction Added', `A new ${transactionType} of ${formatCurrency(parseFloat(amount))} has been added.`);
       }
     } catch (error) {
       console.error('Error adding transaction:', error);
@@ -1087,15 +1128,14 @@ const Home: React.FC = () => {
         return;
       }
       
-      // Create budget limit object with lastNotificationDate
+      // Create budget limit object
       const budgetLimit = {
         category: limitCategory,
         limit: limitValue,
         spent: 0,
         notificationThreshold,
         userId: currentUser?.uid,
-        timestamp: serverTimestamp(),
-        lastNotificationDate: null // Track for daily notification control
+        timestamp: serverTimestamp()
       };
       
       // Add to Firestore
@@ -1105,9 +1145,6 @@ const Home: React.FC = () => {
         setLimitAmount('');
         setNotificationThreshold(80);
         setShowBudgetModal(false);
-        
-        // Send push notification for budget limit addition
-        sendPushNotification('Budget Limit Added', `A new budget limit of ${formatCurrency(limitValue)} has been set for ${limitCategory}.`);
       }
     } catch (error) {
       console.error('Error adding budget limit:', error);

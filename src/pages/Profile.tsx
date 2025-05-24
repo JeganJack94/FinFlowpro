@@ -409,8 +409,8 @@ const Profile: React.FC = () => {
 
       {/* Copyright Footer */}
       <footer className="mt-8 text-center text-xs text-gray-500 dark:text-gray-400 pb-4">
-        <p>© {new Date().getFullYear()} Wintech - Finflow. All rights reserved.</p>
-        <p className="mt-1">Version 1.0.0</p>
+        <p>© {new Date().getFullYear()} Wintech - FinFlow. All rights reserved.</p>
+        <p className="mt-1">Version 2.1.0</p>
       </footer>
     </div>
   );
