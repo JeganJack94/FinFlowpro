@@ -6,6 +6,15 @@ interface NavigationProps {
   navigateTo: (page: 'landing' | 'signin' | 'signup') => void;
 }
 
+function isErrorWithMessage(error: unknown): error is { message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  );
+}
+
 const SignInPage: React.FC<NavigationProps> = ({ navigateTo }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,8 +29,14 @@ const SignInPage: React.FC<NavigationProps> = ({ navigateTo }) => {
       await signInWithEmailAndPassword(auth, email, password);
       // Redirect or show success (e.g., navigateTo('landing') or dashboard)
       navigateTo('landing');
-    } catch (error: any) {
-      alert(error.message);
+    } catch (error: unknown) {
+      let message = 'An unknown error occurred.';
+      if (error instanceof Error) {
+        message = error.message;
+      } else if (isErrorWithMessage(error)) {
+        message = error.message;
+      }
+      alert(message);
     } finally {
       setIsLoading(false);
     }
@@ -62,9 +77,10 @@ const SignInPage: React.FC<NavigationProps> = ({ navigateTo }) => {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm bg-white text-gray-900 dark:bg-gray-700 dark:text-white appearance-none"
                   placeholder="you@example.com"
                   required
+                  autoComplete="username"
                 />
               </div>
 
@@ -83,9 +99,10 @@ const SignInPage: React.FC<NavigationProps> = ({ navigateTo }) => {
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm bg-white text-gray-900 dark:bg-gray-700 dark:text-white appearance-none"
                     placeholder="••••••••"
                     required
+                    autoComplete="current-password"
                   />
                   <button
                     type="button"
