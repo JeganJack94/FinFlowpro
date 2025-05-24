@@ -504,7 +504,9 @@ const Home: React.FC = () => {
     localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(notifications));
   }
 
+  // Only send notifications if enabled
   function sendLocalNotification(notification: LocalNotification) {
+    if (localStorage.getItem('notifications') !== 'true') return;
     const notifications = getLocalNotifications();
     if (notifications.some((n: LocalNotification) => n.id === notification.id || n.message === notification.message)) return;
     notifications.unshift(notification);
@@ -512,6 +514,7 @@ const Home: React.FC = () => {
   }
 
   function sendPushNotification({ title, message }: { title: string; message: string }) {
+    if (localStorage.getItem('notifications') !== 'true') return;
     if (window.Notification && Notification.permission === 'granted') {
       new Notification(title, { body: message, icon: '/favicon-96x96.png' });
     }
@@ -532,6 +535,7 @@ const Home: React.FC = () => {
 
   // Budget limit notification effect
   useEffect(() => {
+    if (localStorage.getItem('notifications') !== 'true') return;
     budgetLimits.forEach((limit) => {
       if (limit.limit > 0 && limit.spent / limit.limit >= limit.notificationThreshold / 100) {
         const notificationId = `budget-${limit.id}`;

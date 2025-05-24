@@ -151,6 +151,7 @@ const Goals: React.FC = () => {
 
   // Helper: Register reminder with service worker for push notification
   function registerReminderNotification(reminder: Reminder) {
+    if (localStorage.getItem('notifications') !== 'true') return;
     if ('serviceWorker' in navigator && 'showNotification' in ServiceWorkerRegistration.prototype) {
       navigator.serviceWorker.ready.then((registration) => {
         // Send a message to the service worker to schedule the notification
