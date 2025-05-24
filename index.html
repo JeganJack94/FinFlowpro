@@ -32,9 +32,64 @@
     <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" /></noscript>
     
     <title>FinFlow</title>
+    
+    <!-- Dark mode initialization to prevent flash -->
+    <script>
+      (function() {
+        // Initialize dark mode immediately before rendering to prevent flash
+        const prefersDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const savedDarkMode = localStorage.getItem('darkMode');
+        const shouldUseDarkMode = savedDarkMode === null ? prefersDarkMode : savedDarkMode === 'true';
+
+        // Block all transitions during initial page load
+        document.documentElement.classList.add('no-transitions');
+
+        // Apply dark mode immediately
+        if (shouldUseDarkMode) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+
+        // Remove transition blocking after the document has fully loaded
+        window.addEventListener('DOMContentLoaded', function() {
+          // Allow for a small delay to ensure everything is properly styled
+          setTimeout(function() {
+            document.documentElement.classList.remove('no-transitions');
+          }, 100);
+        });
+      })();
+    </script>
+    
+    <style>
+      /* Prevent transitions during initial render to avoid flashing */
+      .no-transitions,
+      .no-transitions *,
+      .no-transitions *::before,
+      .no-transitions *::after {
+        transition: none !important;
+        animation: none !important;
+      }
+      
+      /* Prevent content flash by hiding content until CSS is loaded */
+      body {
+        opacity: 0;
+        transition: opacity 0.2s ease-in;
+      }
+      
+      body.loaded {
+        opacity: 1;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Mark body as loaded when content is ready
+      window.addEventListener('load', function() {
+        document.body.classList.add('loaded');
+      });
+    </script>
   </body>
 </html>

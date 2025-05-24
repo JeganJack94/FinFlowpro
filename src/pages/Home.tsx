@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFinance } from '../contexts/FinanceContext';
-import { motion } from 'framer-motion';
+import { motion} from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { doc, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, updateDoc, where, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import PWAPrompt from '../components/PWAPrompt';
 import type { Timestamp } from 'firebase/firestore';
@@ -177,15 +177,16 @@ const Home: React.FC = () => {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   
-  // Dark mode state and toggle
+  // Dark mode state with improved initialization to prevent flashing
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    // Get saved mode from localStorage, or use system preference
     const savedMode = localStorage.getItem('darkMode');
-    // Check if saved mode exists, otherwise check system preference
     return savedMode !== null 
       ? savedMode === 'true' 
       : window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
 
+  // Apply dark mode changes and handle side effects when isDarkMode changes
   useEffect(() => {
     // Apply dark mode to document
     if (isDarkMode) {
@@ -395,6 +396,39 @@ const Home: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser]);
 
+  // Function to update budget limits with current expense totals
+  const updateBudgetLimitsWithExpenses = useCallback((limits: BudgetLimit[]) => {
+    if (!currentUser || limits.length === 0) return;
+
+    // Calculate expenses by category
+    const expensesByCategory: Record<string, number> = {};
+    userTransactions.forEach(transaction => {
+      if (transaction.type === 'expense') {
+        const category = transaction.category;
+        if (category) {
+          expensesByCategory[category] = (expensesByCategory[category] || 0) + transaction.amount;
+        }
+      }
+    });
+
+    // Update each budget limit with the corresponding expense total
+    limits.forEach(async (budgetLimit) => {
+      const category = budgetLimit.category;
+      const spent = expensesByCategory[category] || 0;
+      
+      // Only update if the spent amount has changed
+      if (budgetLimit.spent !== spent) {
+        try {
+          await updateDoc(doc(db, 'users', currentUser.uid, 'budgetLimits', budgetLimit.id), {
+            spent
+          });
+        } catch (error) {
+          console.error('Error updating budget limit:', error);
+        }
+      }
+    });
+  }, [currentUser, userTransactions]);
+
   // Fetch budget limits from Firestore
   useEffect(() => {
     if (!currentUser) return;
@@ -420,11 +454,14 @@ const Home: React.FC = () => {
         };
       });
       setBudgetLimits(limits);
+      
+      // Update budget limits with current expense totals
+      updateBudgetLimitsWithExpenses(limits);
     });
 
     return () => unsubscribe();
-  }, [currentUser]);
-
+  }, [currentUser, userTransactions, updateBudgetLimitsWithExpenses]);
+  
   // Notification fetch logic removed to prevent frequent re-renders
 
   // Budget notification logic removed to prevent frequent re-renders
@@ -461,9 +498,31 @@ const Home: React.FC = () => {
     }
   }, []);
 
+  // This state and effect prevents the flash/blinking during initial render
+  const [isMounted, setIsMounted] = useState(false);
+  
+  // Run this effect once after the component mounts and initial rendering is complete
+  useEffect(() => {
+    // Set a minimal delay to ensure DOM is fully rendered before showing content
+    // This prevents the flash of unstyled content
+    const timer = setTimeout(() => {
+      setIsMounted(true);
+    }, 50);
+    
+    // Add a class to temporarily block transitions during initial render
+    document.documentElement.classList.add('no-transitions');
+    
+    // Remove the transition blocking class after a short delay
+    setTimeout(() => {
+      document.documentElement.classList.remove('no-transitions');
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, []);
+  
   return (
     <div 
-      className="flex flex-col gap-4 pb-20 max-w-md mx-auto w-full overscroll-contain touch-manipulation bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+      className={`flex flex-col gap-4 pb-20 max-w-md mx-auto w-full overscroll-contain touch-manipulation bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 ${!isMounted ? 'opacity-0' : 'opacity-100 transition-opacity duration-200'}`}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -1097,6 +1156,25 @@ const Home: React.FC = () => {
       // Add to Firestore
       if (currentUser) {
         await addDoc(collection(db, 'users', currentUser.uid, 'transactions'), transaction);
+        
+        // If this is an expense transaction, update any budget limits for this category
+        if (transaction.type === 'expense') {
+          // Find budget limits for this category
+          const budgetLimitsRef = collection(db, 'users', currentUser.uid, 'budgetLimits');
+          const q = query(
+            budgetLimitsRef,
+            where('category', '==', category)
+          );
+          
+          const snapshot = await getDocs(q);
+          
+          snapshot.forEach(async (doc) => {
+            const budgetLimit = doc.data();
+            // Update the spent amount
+            const newSpent = (budgetLimit.spent || 0) + parseFloat(amount);
+            await updateDoc(doc.ref, { spent: newSpent });
+          });
+        }
         
         // Reset form and close modal
         setAmount('');
