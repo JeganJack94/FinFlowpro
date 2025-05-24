@@ -466,38 +466,6 @@ const Home: React.FC = () => {
 
   // Budget notification logic removed to prevent frequent re-renders
 
-  // Handle pull-to-refresh functionality for mobile devices
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    // Store the initial touch position for pull-to-refresh calculation
-    const touchY = e.touches[0].clientY;
-    const element = e.currentTarget;
-    
-    element.setAttribute('data-touch-start-y', touchY.toString());
-  }, []);
-
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    const element = e.currentTarget;
-    const touchStartY = parseInt(element.getAttribute('data-touch-start-y') || '0');
-    const touchY = e.touches[0].clientY;
-    const scrollTop = element.scrollTop;
-    
-    // If we're at the top of the scroll and pulling down
-    if (scrollTop <= 0 && touchY > touchStartY && touchY - touchStartY > 70) {
-      e.preventDefault();
-      element.classList.add('refreshing');
-    }
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    const element = e.currentTarget;
-    
-    if (element.classList.contains('refreshing')) {
-      element.classList.remove('refreshing');
-      // Perform refresh action - for a PWA this would typically reload data from cache/network
-      window.location.reload();
-    }
-  }, []);
-
   // This state and effect prevents the flash/blinking during initial render
   const [isMounted, setIsMounted] = useState(false);
   
@@ -523,9 +491,6 @@ const Home: React.FC = () => {
   return (
     <div 
       className={`flex flex-col gap-4 pb-20 max-w-md mx-auto w-full overscroll-contain touch-manipulation bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 ${!isMounted ? 'opacity-0' : 'opacity-100 transition-opacity duration-200'}`}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
     >
       {/* Fixed Navbar */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 p-4 backdrop-blur-md bg-opacity-80 dark:bg-opacity-80 shadow-[0_2px_10px_-2px_rgba(139,92,246,0.3)] dark:shadow-[0_2px_10px_-2px_rgba(139,92,246,0.2)]">
