@@ -938,6 +938,8 @@ const Home: React.FC = () => {
                       placeholder="0.00"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
+                      onFocus={(e) => e.target.select()}
+                      autoComplete="off"
                     />
                   </div>
                 </div>
@@ -1095,6 +1097,8 @@ const Home: React.FC = () => {
                   placeholder="0.00"
                   value={limitAmount}
                   onChange={(e) => setLimitAmount(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  autoComplete="off"
                 />
               </div>
             </div>
