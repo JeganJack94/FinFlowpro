@@ -149,20 +149,6 @@ const Goals: React.FC = () => {
     }
   };
 
-  // Helper: Register reminder with service worker for push notification
-  function registerReminderNotification(reminder: Reminder) {
-    if (localStorage.getItem('notifications') !== 'true') return;
-    if ('serviceWorker' in navigator && 'showNotification' in ServiceWorkerRegistration.prototype) {
-      navigator.serviceWorker.ready.then((registration) => {
-        // Send a message to the service worker to schedule the notification
-        registration.active?.postMessage({
-          type: 'schedule-reminder',
-          reminder,
-        });
-      });
-    }
-  }
-
   const handleAddReminder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reminderTitle || !reminderDate || !reminderGoalId) return;
@@ -176,8 +162,15 @@ const Goals: React.FC = () => {
         createdAt: new Date().toISOString(),
       };
       const docRef = await addDoc(collection(db, `users/${currentUser.uid}/goals/${reminderGoalId}/reminders`), reminder);
-      // Register for push notification
-      registerReminderNotification({ ...reminder, id: docRef.id, goalId: reminderGoalId });
+      // Local notification only
+      sendLocalNotification({
+        id: docRef.id,
+        title: reminder.title,
+        message: `Reminder: ${reminder.title} for goal`,
+        category: 'reminder',
+        timestamp: Date.now(),
+        read: false,
+      });
       setReminderTitle('');
       setReminderDate('');
       setReminderTime('');
@@ -259,15 +252,9 @@ const Goals: React.FC = () => {
     notifications.unshift(notification);
     saveLocalNotifications(notifications);
   }
-  function sendPushNotification({ title, message }: { title: string; message: string }) {
-    // Use favicon for push notification icon
-    if (window.Notification && Notification.permission === 'granted') {
-      new Notification(title, { body: message, icon: '/favicon-96x96.png' });
-    }
-  }
   // --- End notification helpers ---
 
-  // Helper: Send local and push notifications for goal progress
+  // Helper: Send local notification for goal progress (remove push)
   function sendGoalProgressNotification(goal: Goal, percent: number) {
     const motivationalMessages = [
       'Great start! Keep going!',
@@ -284,7 +271,7 @@ const Goals: React.FC = () => {
       const idx = Math.min(Math.floor(percent / 20), motivationalMessages.length - 2);
       message = `You reached ${percent}% of your goal "${goal.name}". ${motivationalMessages[idx]}`;
     }
-    // Local notification
+    // Local notification only
     const notificationId = `goal-${goal.id}-${percent}`;
     const notification: LocalNotification = {
       id: notificationId,
@@ -295,7 +282,6 @@ const Goals: React.FC = () => {
       read: false
     };
     sendLocalNotification(notification);
-    sendPushNotification({ title: notification.title, message });
   }
 
   // Effect: Watch for goal progress milestones
@@ -313,17 +299,6 @@ const Goals: React.FC = () => {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [goals]);
-
-  // Register sw-enhancement.js if not already registered
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistration('/sw-enhancement.js').then((reg) => {
-        if (!reg) {
-          navigator.serviceWorker.register('/sw-enhancement.js');
-        }
-      });
-    }
-  }, []);
 
   return (
     <div className="flex flex-col gap-4 pb-20">

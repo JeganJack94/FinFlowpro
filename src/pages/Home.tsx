@@ -203,6 +203,32 @@ const Home: React.FC = () => {
     setIsDarkMode(prevMode => !prevMode);
   };
   
+  // Notification type definition
+  interface LocalNotification {
+    id: string;
+    title: string;
+    message: string;
+    category?: string;
+    timestamp: number;
+    read: boolean;
+  }
+
+  // Local notification helpers
+  const LOCAL_NOTIFICATIONS_KEY = 'finflow_local_notifications';
+
+  const getLocalNotifications = useCallback((): LocalNotification[] => {
+    try {
+      const data = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  function saveLocalNotifications(notifications: LocalNotification[]) {
+    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(notifications));
+  }
+
   // Transaction modal states
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
   const [transactionType, setTransactionType] = useState<'expense' | 'income' | 'investment' | 'liability' | 'lend'>('expense');
@@ -227,12 +253,28 @@ const Home: React.FC = () => {
   // All transactions modal state
   const [showAllTransactionsModal, setShowAllTransactionsModal] = useState(false);
   
-  // Notification modal state
+  // Notification modal state - defined after getLocalNotifications
   const [showNotifications, setShowNotifications] = useState(false);
-  const [localNotifications, setLocalNotifications] = useState<LocalNotification[]>(() => getLocalNotifications());
+  const [localNotifications, setLocalNotifications] = useState<LocalNotification[]>(getLocalNotifications);
   
   // Toast notification state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  
+  // Show notification modal when bell icon is clicked
+  const openNotifications = () => setShowNotifications(true);
+  const closeNotifications = () => setShowNotifications(false);
+  
+  // Only send notifications if enabled
+  function sendLocalNotification(notification: LocalNotification) {
+    if (localStorage.getItem('notifications') !== 'true') return;
+    const notifications = getLocalNotifications();
+    if (notifications.some((n: LocalNotification) => n.id === notification.id || n.message === notification.message)) return;
+    notifications.unshift(notification);
+    saveLocalNotifications(notifications);
+    setLocalNotifications(notifications);
+    // Dispatch a storage event to update notification count in other tabs/windows
+    window.dispatchEvent(new Event('storage'));
+  }
   
   // Show toast notification
   function showToast(message: string, type: 'success' | 'error' = 'success') {
@@ -478,61 +520,6 @@ const Home: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser, userTransactions, updateBudgetLimitsWithExpenses]);
   
-  // Notification type
-  interface LocalNotification {
-    id: string;
-    title: string;
-    message: string;
-    category?: string;
-    timestamp: number;
-    read: boolean;
-  }
-
-  // Local notification helpers
-  const LOCAL_NOTIFICATIONS_KEY = 'finflow_local_notifications';
-
-  function getLocalNotifications(): LocalNotification[] {
-    try {
-      const data = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  function saveLocalNotifications(notifications: LocalNotification[]) {
-    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(notifications));
-  }
-
-  // Only send notifications if enabled
-  function sendLocalNotification(notification: LocalNotification) {
-    if (localStorage.getItem('notifications') !== 'true') return;
-    const notifications = getLocalNotifications();
-    if (notifications.some((n: LocalNotification) => n.id === notification.id || n.message === notification.message)) return;
-    notifications.unshift(notification);
-    saveLocalNotifications(notifications);
-  }
-
-  function sendPushNotification({ title, message }: { title: string; message: string }) {
-    if (localStorage.getItem('notifications') !== 'true') return;
-    if (window.Notification && Notification.permission === 'granted') {
-      new Notification(title, { body: message, icon: '/favicon-96x96.png' });
-    }
-  }
-
-  // Listen for local notification changes (for modal)
-  useEffect(() => {
-    function handleStorage() {
-      setLocalNotifications(getLocalNotifications());
-    }
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
-  // Show notification modal when bell icon is clicked
-  const openNotifications = () => setShowNotifications(true);
-  const closeNotifications = () => setShowNotifications(false);
-
   // Budget limit notification effect
   useEffect(() => {
     if (localStorage.getItem('notifications') !== 'true') return;
@@ -548,7 +535,6 @@ const Home: React.FC = () => {
           timestamp: Date.now(),
           read: false,
         });
-        sendPushNotification({ title: 'Budget Limit Alert', message });
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -576,12 +562,26 @@ const Home: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
   
+  // Listen for local notification changes (for modal)
+  useEffect(() => {
+    function handleStorage() {
+      setLocalNotifications(getLocalNotifications());
+    }
+    window.addEventListener('storage', handleStorage);
+    // Also listen for custom storage event dispatched within the same window
+    window.addEventListener('custom-storage', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('custom-storage', handleStorage);
+    };
+  }, [getLocalNotifications]);
+  
   return (
     <div 
       className={`flex flex-col gap-4 pb-20 max-w-md mx-auto w-full overscroll-contain touch-manipulation bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 ${!isMounted ? 'opacity-0' : 'opacity-100 transition-opacity duration-200'}`}
     >
       {/* Fixed Navbar */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 p-4 backdrop-blur-md bg-opacity-80 dark:bg-opacity-80 shadow-[0_2px_10px_-2px_rgba(139,92,246,0.3)] dark:shadow-[0_2px_10px_-2px_rgba(139,92,246,0.2)]">
+      <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 p-4 backdrop-blur-md bg-opacity-80 dark:bg-opacity-80 shadow-[0_2px_10px_-2px_rgba(0,0,0,0.1)]">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center">
             <i className="fa-solid fa-wallet text-purple-600 text-xl mr-2"></i>
@@ -595,9 +595,17 @@ const Home: React.FC = () => {
               onClick={openNotifications}
             >
               <i className="fa-solid fa-bell text-xl text-purple-500 hover:text-purple-700 transition-colors"></i>
-              {localNotifications.some((n: LocalNotification) => !n.read) && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white dark:border-gray-900"></span>
-              )}
+              {(() => {
+                const unreadCount = localNotifications.filter((n: LocalNotification) => !n.read).length;
+                if (unreadCount > 0) {
+                  return (
+                    <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-[18px] h-[18px] text-xs font-bold text-white bg-red-500 rounded-full border-2 border-white dark:border-gray-900 px-1">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  );
+                }
+                return null;
+              })()}
             </button>
             {/* Dark/Light Mode Toggle */}
             <div className="relative">
